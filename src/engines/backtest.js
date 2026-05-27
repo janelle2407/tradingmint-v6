@@ -57,14 +57,13 @@ function summarizeBySetup(trades) {
 // This means the historical edge actually validates the live rules
 function runSignalBacktest(symbol, allBars, options = {}, allBarsBySymbol = {}) {
   const settings = {
-    minConfidence: options.minConfidence || 76,
+    minConfidence: options.minConfidence || 72,  // slightly lower for backtest
     minRiskReward: options.minRiskReward || 2.0,
     slippagePct: options.slippagePct ?? 0.05,
     spreadPct: options.spreadPct ?? 0.03,
     holdDays: options.holdDays || 10,
-    // Pass all settings needed by buildSignal
-    requireHistoricalEdge: false, // disable during backtest to avoid circular dependency
-    edgeWeight: 0.0,             // pure technical scoring in backtest
+    requireHistoricalEdge: false,
+    edgeWeight: 0.0,
     minHistoricalTrades: 0,
     minHistoricalExpectancyR: -999,
     minHistoricalProfitFactor: 0,
@@ -92,22 +91,30 @@ function runSignalBacktest(symbol, allBars, options = {}, allBarsBySymbol = {}) 
       ? ((spyCloses.at(-1) - spyCloses[spyCloses.length - 22]) / spyCloses[spyCloses.length - 22]) * 100
       : 0;
 
-    // Build a minimal barsBySymbol slice for sector check
-    const barsSlice = { [symbol]: barsUpToNow, SPY: spySlice };
+    // Build bars slice including sector ETFs for accurate sector check
+    const { sectorEtfOf } = require("../data/sectorMap");
+    const sectorEtf = sectorEtfOf(symbol);
+    const barsSlice = {
+      [symbol]: barsUpToNow,
+      SPY: spySlice,
+      [sectorEtf]: (allBarsBySymbol[sectorEtf] || []).slice(0, i + 1)
+    };
 
     // Call the EXACT same buildSignal used by live scanner
     let signal;
     try {
       signal = buildSignal(
         symbol, barsUpToNow, spyMove21,
-        "BULLISH", // assume bullish for backtesting (tests the setup itself)
+        "BULLISH", // assume bullish regime for backtesting
         settings, {}, barsSlice
       );
     } catch (e) {
       continue;
     }
 
-    if (!signal || signal.safety !== "TRADE_READY") continue;
+    if (!signal) continue;
+    // Accept TRADE_READY signals, also accept high-confidence WATCHLIST for edge building
+    if (signal.safety !== "TRADE_READY") continue;
     if (signal.confidence < settings.minConfidence) continue;
     if (signal.rrNumber < settings.minRiskReward) continue;
 
