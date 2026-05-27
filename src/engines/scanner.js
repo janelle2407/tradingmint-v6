@@ -37,26 +37,67 @@ function emaArray(values, period) {
 }
 
 function macd(closes) {
-  // Returns { macdLine, signalLine, histogram, bullish }
-  if (!Array.isArray(closes) || closes.length < 35) return null;
-  const ema12 = emaArray(closes, 12);
-  const ema26 = emaArray(closes, 26);
-  const macdLine = [];
-  for (let i = 0; i < closes.length; i++) {
-    if (ema12[i] != null && ema26[i] != null) macdLine.push(ema12[i] - ema26[i]);
-    else macdLine.push(null);
+  // Returns { macdLine, signalLine, histogram, bullish, crossing }
+  // Fix: build full signal-line array so crossing compares prev MACD to prev signal (not current signal)
+  if (!Array.isArray(closes) || closes.length < 40) return null;
+  const ema12arr = emaArray(closes, 12);
+  const ema26arr = emaArray(closes, 26);
+
+  // Build MACD line array (same length as closes)
+  const macdArr = closes.map((_, i) =>
+    ema12arr[i] != null && ema26arr[i] != null ? ema12arr[i] - ema26arr[i] : null
+  );
+
+  // Build signal line array from valid MACD values using proper EMA
+  // We need the signal line as a full array aligned with macdArr
+  const validMacdValues = macdArr.filter(v => v != null);
+  if (validMacdValues.length < 9) return null;
+
+  // Calculate signal line EMA(9) over MACD values, building full array
+  const signalArr = [];
+  let sigVal = null;
+  const k = 2 / (9 + 1);
+  let seedCount = 0;
+  let seedSum = 0;
+
+  for (let i = 0; i < macdArr.length; i++) {
+    if (macdArr[i] == null) { signalArr.push(null); continue; }
+    if (sigVal === null) {
+      seedSum += macdArr[i];
+      seedCount++;
+      if (seedCount === 9) {
+        sigVal = seedSum / 9;
+        signalArr.push(sigVal);
+      } else {
+        signalArr.push(null);
+      }
+    } else {
+      sigVal = macdArr[i] * k + sigVal * (1 - k);
+      signalArr.push(sigVal);
+    }
   }
-  const validMacd = macdLine.filter(v => v != null);
-  if (validMacd.length < 9) return null;
-  const signalLine = ema(validMacd, 9);
-  const lastMacd = macdLine.at(-1);
-  const prevMacd = macdLine.filter(v => v != null).at(-2);
-  const histogram = lastMacd != null && signalLine != null ? lastMacd - signalLine : null;
-  // Bullish: MACD line above signal, or crossing up
-  const bullish = lastMacd != null && signalLine != null && lastMacd > signalLine;
-  const crossing = lastMacd != null && prevMacd != null && signalLine != null &&
-    prevMacd <= signalLine && lastMacd > signalLine;
-  return { macdLine: round(lastMacd, 4), signalLine: round(signalLine, 4), histogram: round(histogram, 4), bullish, crossing };
+
+  const lastMacd = macdArr.at(-1);
+  const prevMacd = macdArr.slice(0, -1).filter(v => v != null).at(-1);
+  const lastSignal = signalArr.at(-1);
+  const prevSignal = signalArr.slice(0, -1).filter(v => v != null).at(-1);
+
+  if (lastMacd == null || lastSignal == null) return null;
+
+  const histogram = lastMacd - lastSignal;
+  const bullish = lastMacd > lastSignal;
+
+  // Fix: true crossover = prev MACD was BELOW prev signal, now ABOVE current signal
+  const crossing = prevMacd != null && prevSignal != null &&
+    prevMacd <= prevSignal && lastMacd > lastSignal;
+
+  return {
+    macdLine: round(lastMacd, 4),
+    signalLine: round(lastSignal, 4),
+    histogram: round(histogram, 4),
+    bullish,
+    crossing
+  };
 }
 
 function rsi(values, period = 14) {
@@ -459,7 +500,7 @@ function buildSignal(symbol, bars, spyMove21, marketBias, settings = {}, histori
 
 // ─── Market Scan ───────────────────────────────────────────────────────────
 
-function scanMarket(barsBySymbol, settings = {}, historicalEdges = {}) {
+function scanMarket(barsBySymbol, settings = {}, historicalEdges = {}, liveQuotes = {}) {
   const spyBars = barsBySymbol.SPY || [];
   const spyCloses = spyBars.map(b => b.close);
   const spyMove21 = spyCloses.length > 22
@@ -502,6 +543,21 @@ function scanMarket(barsBySymbol, settings = {}, historicalEdges = {}) {
     sectorLeader,
     confidence: Math.round((finalRegime.breadth + (spySignal?.confidence || 50)) / 2)
   };
+
+  // Overlay live prices on signals for display (without affecting indicator calculations)
+  if (liveQuotes && Object.keys(liveQuotes).length) {
+    for (const signal of signals) {
+      const lq = liveQuotes[signal.symbol];
+      if (lq && lq.price) {
+        signal.livePrice = lq.price;
+        signal.livePct = lq.changePct;
+        signal.isLive = true;
+        // Update displayed price to live price (entry zone check uses this)
+        signal.price = lq.price;
+        if (lq.changePct != null) signal.changePct = lq.changePct;
+      }
+    }
+  }
 
   return { market, signals };
 }
