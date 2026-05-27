@@ -136,5 +136,40 @@ app.get("/api/replay", (req, res) => {
   res.json({ ok: true, symbol: req.query.symbol || null, events: buildReplay(db, req.query.symbol) });
 });
 
-app.post("/api/broker/order",(req,res)=>res.status(403).json(placeOrder(req.body))); app.post("/api/reset",(req,res)=>{const db=resetDb();res.json({ok:true,db});}); app.get("*",(req,res)=>res.sendFile(path.join(__dirname,"../public/index.html"))); app.listen(PORT,()=>console.log(`TradingMint PRO ${VERSION} running on port ${PORT}`));
+app.post("/api/broker/order",(req,res)=>res.status(403).json(placeOrder(req.body))); app.post("/api/reset",(req,res)=>{const db=resetDb();res.json({ok:true,db});}); app.get("*",(req,res)=>res.sendFile(path.join(__dirname,"../public/index.html"))); app.listen(PORT,()=>{
+  console.log(`TradingMint PRO ${VERSION} running on port ${PORT}`);
+
+  // Self-wake scheduler — keeps server alive around the opening window
+  // Checks every minute if we need to pre-warm or run auto-paper
+  setInterval(async () => {
+    try {
+      const { getMarketSession } = require("./engines/marketHours");
+      const session = getMarketSession();
+      const et = new Date(new Date().toLocaleString("en-US", { timeZone: "America/New_York" }));
+      const mins = et.getHours() * 60 + et.getMinutes();
+      const PRE_WARM_START = 9 * 60 + 5;  // 9:05 AM ET — pre-warm 10 mins before window
+      const PRE_WARM_END   = 10 * 60 + 5; // 10:05 AM ET — stop after window closes
+
+      // Only run during the pre-warm + window period on weekdays
+      const day = et.getDay();
+      if (day === 0 || day === 6) return;
+      if (mins < PRE_WARM_START || mins > PRE_WARM_END) return;
+
+      // Pre-warm: fetch universe data so it's ready when window opens
+      if (mins >= PRE_WARM_START && mins < 9 * 60 + 15) {
+        console.log(`[AUTO-WARM] Pre-warming data at ${session.etTime}`);
+        await getUniverse(false); // warm cache without forcing refresh
+        return;
+      }
+
+      // During opening window: run buildState to enter trades
+      if (session.autoPaperAllowed) {
+        console.log(`[AUTO-PAPER] Running auto-paper check at ${session.etTime}`);
+        await buildState(false);
+      }
+    } catch(e) {
+      console.log(`[AUTO-WARM] Error: ${e.message}`);
+    }
+  }, 60 * 1000); // every 60 seconds
+});
 // historicalMeta

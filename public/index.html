@@ -2331,7 +2331,26 @@ document.getElementById('muteBtn').addEventListener('click', toggleMute);
 
 // ── Init ──────────────────────────────────────────────────────
 setInterval(() => marketCountdown(), 1000);
-setInterval(() => loadState(false), 180000);
+// Smart refresh — every 60s during opening window, every 3 mins otherwise
+setInterval(() => {
+  const now = new Date();
+  const et = new Date(now.toLocaleString('en-US', {timeZone: 'America/New_York'}));
+  const mins = et.getHours() * 60 + et.getMinutes();
+  const day = et.getDay();
+  const inWindow = day !== 0 && day !== 6 && mins >= 9*60+10 && mins < 10*60+5;
+  // During opening window refresh every 60s, otherwise every 3 mins
+  if (inWindow) loadState(false);
+}, 60000);
+
+setInterval(() => {
+  const now = new Date();
+  const et = new Date(now.toLocaleString('en-US', {timeZone: 'America/New_York'}));
+  const mins = et.getHours() * 60 + et.getMinutes();
+  const day = et.getDay();
+  const inWindow = day !== 0 && day !== 6 && mins >= 9*60+10 && mins < 10*60+5;
+  // Outside opening window, refresh every 3 mins
+  if (!inWindow) loadState(false);
+}, 180000);
 marketCountdown();
 loadState(false);
 </script>
