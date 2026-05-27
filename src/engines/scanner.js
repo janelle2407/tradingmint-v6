@@ -258,10 +258,16 @@ function marketRegimeFromSignals(signals, vix) {
   }
 
   let regime = "NEUTRAL";
-  // Fix 3: Require 55%+ breadth for BULLISH (was 50% — too loose)
-  if (breadth >= 55 && volatility !== "HIGH") regime = "BULLISH";
-  if (breadth < 35 || volatility === "HIGH") regime = "BEARISH";
-  return { regime, breadth, volatility };
+  // VIX spike filter — professional rule: step aside when fear is high
+  // VIX >25 = caution (reduce size), VIX >30 = no new longs at all
+  const vixPause  = vix && vix > 25;
+  const vixHalt   = vix && vix > 30;
+
+  if (breadth >= 55 && volatility !== "HIGH" && !vixPause) regime = "BULLISH";
+  if (breadth < 35 || volatility === "HIGH" || vixHalt) regime = "BEARISH";
+  if (vixPause && !vixHalt && regime === "NEUTRAL") regime = "NEUTRAL"; // keep neutral, not bullish
+
+  return { regime, breadth, volatility, vixPause, vixHalt };
 }
 
 // ─── Sector ETF Momentum Check ────────────────────────────────────────────────
@@ -377,6 +383,22 @@ function buildSignal(symbol, bars, spyMove21, marketBias, settings = {}, histori
   else if (volumeRatio && volumeRatio >= 1.1) { technicalScore += 3; }
   else if (volumeRatio) warnings.push("Volume is not confirming the move yet.");
 
+  // Support/resistance proximity
+  const high52 = bars.length >= 252 ? Math.max(...bars.slice(-252).map(b => b.high)) : high20;
+  const low52  = bars.length >= 252 ? Math.min(...bars.slice(-252).map(b => b.low))  : low20;
+  const distFromResistance = ((high52 - price) / price) * 100;
+  const distFromSupport    = ((price - low52) / price) * 100;
+  if (distFromResistance < 1.5 && setup !== "Breakout") {
+    technicalScore -= 8;
+    warnings.push(`Price is within ${distFromResistance.toFixed(1)}% of 52-week high resistance — high chance of rejection here.`);
+  } else if (distFromResistance > 5) {
+    technicalScore += 4;
+    reasons.push(`Good distance (${distFromResistance.toFixed(1)}%) from major resistance — room to run.`);
+  }
+  if (distFromSupport < 3) {
+    warnings.push(`Price is close to 52-week low — risk of further selling.`);
+  }
+
   // Setup bonus
   if (setup === "Breakout") { technicalScore += 7; reasons.push("Breaking out near a 20-day high."); }
   if (setup === "Momentum") { technicalScore += 6; reasons.push("Strong momentum setup — price and indicators aligned."); }
@@ -392,6 +414,16 @@ function buildSignal(symbol, bars, spyMove21, marketBias, settings = {}, histori
   if (marketBias === "BEARISH") { technicalScore -= 14; warnings.push("Overall market is bearish — be more selective."); }
   if (marketBias === "NEUTRAL") { technicalScore -= 5; warnings.push("Market is neutral — be selective, only take the highest-confidence setups."); }
 
+  // SPY same-day direction (professional rule: don't fight the market today)
+  const spyBars = barsBySymbol.SPY || [];
+  if (spyBars.length >= 2) {
+    const spyToday = spyBars.at(-1)?.close;
+    const spyYest  = spyBars.at(-2)?.close;
+    const spyDayMove = spyToday && spyYest ? ((spyToday - spyYest) / spyYest) * 100 : 0;
+    if (spyDayMove >= 0.3) { technicalScore += 5; reasons.push(`S&P 500 is up ${spyDayMove.toFixed(1)}% today — market has a tailwind.`); }
+    else if (spyDayMove <= -0.5) { technicalScore -= 8; warnings.push(`S&P 500 is down ${Math.abs(spyDayMove).toFixed(1)}% today — market headwind, be cautious.`); }
+  }
+
   // Sector ETF momentum filter — one of the most powerful filters
   if (sectorCheck.bullish === true) {
     technicalScore += 10;
@@ -405,7 +437,29 @@ function buildSignal(symbol, bars, spyMove21, marketBias, settings = {}, histori
   const stretched = (rsi14 && rsi14 > 74) || (ema20 && price > ema20 * 1.09);
   if (stretched) { technicalScore -= 14; warnings.push("Price looks extended — avoid chasing. Wait for a pullback."); }
 
+  // Min share price filter ($10+) — penny stocks have unreliable technicals
+  if (price < 10) { technicalScore -= 30; warnings.push("Price below $10 — penny stock territory. Technicals unreliable."); }
+
+  // Min average daily volume (500k+) — need liquidity to exit cleanly
+  if (avgVol && avgVol < 500000) { technicalScore -= 20; warnings.push(`Low avg volume (${Math.round(avgVol/1000)}k/day) — hard to exit cleanly. Top traders require 500k+ daily volume.`); }
+
   technicalScore = Math.max(1, Math.min(99, Math.round(technicalScore)));
+
+  // ── Weekly trend alignment (higher timeframe) ──
+  // Professional rule: only trade in direction of weekly trend
+  if (bars.length >= 6) {
+    const weekClose = bars.at(-1).close;
+    const weekOpen  = bars.at(-6)?.close || weekClose; // ~1 week ago
+    const weeklyBull = weekClose > weekOpen;
+    const weeklyMove = ((weekClose - weekOpen) / weekOpen) * 100;
+    if (weeklyBull && weeklyMove > 1) {
+      technicalScore += 7;
+      reasons.push(`Weekly trend is up ${weeklyMove.toFixed(1)}% — higher timeframe aligned.`);
+    } else if (!weeklyBull && weeklyMove < -1) {
+      technicalScore -= 8;
+      warnings.push(`Weekly trend is down ${Math.abs(weeklyMove).toFixed(1)}% — higher timeframe is bearish.`);
+    }
+  }
 
   // ── Historical Edge ──
   const edge = historicalScore(historicalEdges[symbol], setup, settings);
@@ -424,6 +478,19 @@ function buildSignal(symbol, bars, spyMove21, marketBias, settings = {}, histori
   const rrNumber = round((target1 - price) / risk, 2);
 
   if (rrNumber < settings.minRiskReward) warnings.push(`Risk-to-reward is ${rrNumber}:1 which is below the ${settings.minRiskReward}:1 minimum.`);
+
+  // Pre-market gap check — if today's open gapped >2% above yesterday's close, flag it
+  if (bars.length >= 2) {
+    const todayOpen = last.open || price;
+    const yesterdayClose = bars.at(-2)?.close || todayOpen;
+    const gapPct = ((todayOpen - yesterdayClose) / yesterdayClose) * 100;
+    if (gapPct > 2) {
+      technicalScore -= 10;
+      warnings.push(`Stock gapped up ${gapPct.toFixed(1)}% at open — chasing gaps is one of the top losing habits. Wait for a pullback.`);
+    } else if (gapPct < -2) {
+      warnings.push(`Stock gapped down ${Math.abs(gapPct).toFixed(1)}% at open — avoid catching a falling knife.`);
+    }
+  }
   if (marketBias !== "BULLISH") warnings.push("The market isn't fully bullish right now — trade smaller.");
   if (!trendBull) warnings.push("Not all trend filters are bullish yet.");
 
@@ -463,6 +530,8 @@ function buildSignal(symbol, bars, spyMove21, marketBias, settings = {}, histori
     price: round(price),
     changePct: round(move1, 2),
     setup,
+    weeklyTrend: bars.length >= 6 ? round(((bars.at(-1).close - (bars.at(-6)?.close || bars.at(-1).close)) / (bars.at(-6)?.close || bars.at(-1).close)) * 100, 1) : null,
+    spyDayMove: (() => { const sb = barsBySymbol.SPY||[]; return sb.length>=2 ? round(((sb.at(-1)?.close-sb.at(-2)?.close)/sb.at(-2)?.close)*100,2) : null; })(),
     confidence,
     technicalScore,
     historicalScore: edge.score,

@@ -52,6 +52,7 @@ function enterPaper(db, signal, source = "manual", barsBySymbol = {}) {
     confidence: signal.confidence,
     rrNumber: signal.rrNumber,
     source,
+    sectorEtf: signal.sectorEtf || null,
     entryTime: new Date().toISOString(),
     lastPrice: signal.price,
     reasons: signal.reasons,

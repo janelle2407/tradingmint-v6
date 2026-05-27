@@ -40,10 +40,11 @@ function getMarketSession() {
   const { h, m, s, day, totalMins } = getETComponents();
 
   const PRE_MARKET_START  = 4  * 60;       // 4:00 AM ET
-  const OPEN_WINDOW_START = 9  * 60 + 15;  // 9:15 AM ET  (auto-paper ON)
-  const OPEN_WINDOW_END   = 10 * 60;       // 10:00 AM ET (auto-paper OFF)
+  const OPEN_WINDOW_START = 9  * 60 + 45;  // 9:45 AM ET (skip first 15 mins of chaos)
+  const OPEN_WINDOW_END   = 10 * 60 + 30;  // 10:30 AM ET (wider window for entries)
   const MARKET_OPEN       = 9  * 60 + 30;  // 9:30 AM ET
   const MARKET_CLOSE      = 16 * 60;       // 4:00 PM ET
+  const CLOSE_BUFFER      = 15 * 60 + 45;  // 3:45 PM ET (no new entries last 15 mins)
   const AFTER_HOURS_END   = 20 * 60;       // 8:00 PM ET
 
   const isWeekend = day === 0 || day === 6;
@@ -84,20 +85,30 @@ function getMarketSession() {
 
   if (totalMins >= OPEN_WINDOW_START && totalMins < OPEN_WINDOW_END) {
     return {
-      session: "OPENING_WINDOW", isMarketOpen: totalMins >= MARKET_OPEN,
+      session: "OPENING_WINDOW", isMarketOpen: true,
       isOpeningWindow: true, autoPaperAllowed: true,
-      reason: "✅ Opening window ACTIVE — auto-paper is entering trades now.",
-      etTime, nextEvent: "Window closes at 10:00 AM ET (12:00 AM AEST)",
-      aestNote: aestWindow
+      reason: "✅ Opening window ACTIVE (9:45–10:30 AM ET) — skipped first 15 mins of chaos. Auto-paper entering trades.",
+      etTime, nextEvent: "Window closes at 10:30 AM ET (12:30 AM AEST)",
+      aestNote: "12:45 AM – 12:30 AM AEST"
     };
   }
 
-  if (totalMins >= OPEN_WINDOW_END && totalMins < MARKET_CLOSE) {
+  if (totalMins >= OPEN_WINDOW_END && totalMins < CLOSE_BUFFER) {
     return {
       session: "MARKET_OPEN", isMarketOpen: true, isOpeningWindow: false,
       autoPaperAllowed: false,
-      reason: "Market open but past opening window. Auto-paper OFF to avoid mid-day chasing.",
-      etTime, nextEvent: "Market closes at 4:00 PM ET",
+      reason: "Market open — past entry window. Auto-paper OFF. Existing positions still monitored.",
+      etTime, nextEvent: "Market closes at 4:00 PM ET (6:00 AM AEST)",
+      aestNote: aestMarket
+    };
+  }
+
+  if (totalMins >= CLOSE_BUFFER && totalMins < MARKET_CLOSE) {
+    return {
+      session: "MARKET_CLOSE_BUFFER", isMarketOpen: true, isOpeningWindow: false,
+      autoPaperAllowed: false,
+      reason: "Last 15 mins before close — no new entries. Existing positions still monitored for exit.",
+      etTime, nextEvent: "Market closes at 4:00 PM ET (6:00 AM AEST)",
       aestNote: aestMarket
     };
   }

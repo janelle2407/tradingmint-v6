@@ -8,7 +8,7 @@ const { exposureSummary } = require("./engines/correlation");
 const { createSqliteAdapter } = require("./storage/sqliteAdapter"); const { riskLockout } = require("./engines/risk");
 const { getMarketSession, isEntryStillValid } = require("./engines/marketHours");
 const { fetchLiveQuotes, mergeLiveIntoBars, isMarketHours } = require("./data/liveQuotes");
-const app=express(); const PORT=process.env.PORT||10000; const VERSION="6.3.0-aligned-backtest-macd-fix-live-separation"; app.use(express.json({limit:"1mb"})); app.use(express.static(path.join(__dirname,"../public"))); let lastUniverse=null,lastUniverseTime=0;
+const app=express(); const PORT=process.env.PORT||10000; const VERSION="6.4.0-pro-rules-vix-gap-sr-liquidity"; app.use(express.json({limit:"1mb"})); app.use(express.static(path.join(__dirname,"../public"))); let lastUniverse=null,lastUniverseTime=0;
 async function getUniverse(force=false){
   // Fix 2: Separate completed daily bars from live quotes
   // completedBarsBySymbol = historical EOD bars used for ALL indicator calculations
@@ -147,8 +147,8 @@ app.post("/api/broker/order",(req,res)=>res.status(403).json(placeOrder(req.body
       const session = getMarketSession();
       const et = new Date(new Date().toLocaleString("en-US", { timeZone: "America/New_York" }));
       const mins = et.getHours() * 60 + et.getMinutes();
-      const PRE_WARM_START = 9 * 60 + 5;  // 9:05 AM ET — pre-warm 10 mins before window
-      const PRE_WARM_END   = 10 * 60 + 5; // 10:05 AM ET — stop after window closes
+      const PRE_WARM_START = 9 * 60 + 30; // 9:30 AM ET — pre-warm at market open
+      const PRE_WARM_END   = 10 * 60 + 35; // 10:35 AM ET — stop after window closes
 
       // Only run during the pre-warm + window period on weekdays
       const day = et.getDay();
@@ -156,7 +156,7 @@ app.post("/api/broker/order",(req,res)=>res.status(403).json(placeOrder(req.body
       if (mins < PRE_WARM_START || mins > PRE_WARM_END) return;
 
       // Pre-warm: fetch universe data so it's ready when window opens
-      if (mins >= PRE_WARM_START && mins < 9 * 60 + 15) {
+      if (mins >= PRE_WARM_START && mins < 9 * 60 + 45) {
         console.log(`[AUTO-WARM] Pre-warming data at ${session.etTime}`);
         await getUniverse(false); // warm cache without forcing refresh
         return;
