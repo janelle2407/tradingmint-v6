@@ -1,0 +1,20 @@
+{
+  "name": "tradingmint-pro",
+  "version": "6.0.0",
+  "description": "TradingMint PRO v6.0 — MACD, ADX, Bollinger Bands, tighter stops, beginner-friendly UI, improved accuracy.",
+  "main": "src/server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node tests/runTests.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  },
+  "optionalDependencies": {
+    "better-sqlite3": "^11.8.1"
+  }
+}
