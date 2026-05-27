@@ -183,42 +183,27 @@ function runSignalBacktest(symbol, bars, options = {}, barsBySymbol = {}) {
     // ── Enter on next bar open ──
     const nextBar = bars[i + 1];
     if (!nextBar) continue;
-    const rawEntry = nextBar.open || nextBar.close;
-    const entryPrice = applyCosts(rawEntry, "buy", settings);
+    const entryPrice = applyCosts(nextBar.open || nextBar.close, "buy", settings);
 
-    // Skip if price gapped more than 2% above our signal price (chasing)
-    if (rawEntry > close * 1.02) continue;
-
-    // Recalculate stop relative to actual entry price
-    // Stop shifts by the same amount as the entry gap
-    const entryGap = rawEntry - close;
-    const adjustedStop = stop + entryGap;
-    const entryRisk = Math.max(close * 0.005, entryPrice - adjustedStop); // min 0.5% risk
-    const adjustedTarget = target + entryGap;
-
-    // Skip if risk/reward is now below minimum after adjustment
-    if ((adjustedTarget - entryPrice) / entryRisk < minRR) continue;
+    // Use signal-bar stop and target (calculated from close)
+    // Ensure risk is at least 0.5% of price to avoid division issues
+    const entryRisk = Math.max(entryPrice * 0.005, risk);
+    const entryStop = entryPrice - entryRisk;
+    const entryTarget = entryPrice + entryRisk * 2.0;
 
     let exit = null, exitReason = "Timed exit";
     let exitDate = bars[Math.min(i + 1 + holdDays, bars.length - 1)].date;
 
     for (let j = i + 2; j <= i + 1 + holdDays && j < bars.length; j++) {
       const bar = bars[j];
-      // Gap through adjusted stop
-      if (bar.open <= adjustedStop) {
-        exit = applyCosts(bar.open, "sell", settings);
-        exitReason = "Gap through stop";
-        exitDate = bar.date;
-        break;
-      }
-      if (bar.low <= adjustedStop) {
-        exit = applyCosts(adjustedStop, "sell", settings);
+      if (bar.low <= entryStop) {
+        exit = applyCosts(entryStop, "sell", settings);
         exitReason = "Stop hit";
         exitDate = bar.date;
         break;
       }
-      if (bar.high >= adjustedTarget) {
-        exit = applyCosts(adjustedTarget, "sell", settings);
+      if (bar.high >= entryTarget) {
+        exit = applyCosts(entryTarget, "sell", settings);
         exitReason = "Target hit";
         exitDate = bar.date;
         break;
@@ -231,9 +216,8 @@ function runSignalBacktest(symbol, bars, options = {}, barsBySymbol = {}) {
       exitDate = eb.date;
     }
 
-    const pnlR = (exit - entryPrice) / entryRisk;
-    // Sanity check — cap at realistic R values
-    if (!Number.isFinite(pnlR) || pnlR < -10 || pnlR > 20) continue;
+    const pnlR = Number(((exit - entryPrice) / entryRisk).toFixed(2));
+    if (!Number.isFinite(pnlR)) continue;
     trades.push({
       symbol, setupType, entryDate: nextBar.date, exitDate,
       entry: Number(entryPrice.toFixed(4)), exit: Number(exit.toFixed(4)),
