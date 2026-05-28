@@ -621,9 +621,10 @@ label { font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: 
               <th style="width:120px">Edge</th>
               <th style="width:90px">Price</th>
               <th style="width:70px">Change</th>
-              <th style="width:65px">Sector</th>
-              <th style="width:90px">Signal</th>
-              <th style="width:80px">Buy</th>
+              <th style="width:55px">Sector</th>
+              <th style="width:60px">RS %ile</th>
+              <th style="width:80px">Grade</th>
+              <th style="width:70px">Buy</th>
             </tr>
           </thead>
           <tbody id="scannerRows"></tbody>
@@ -675,7 +676,7 @@ label { font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: 
         <div class="card-head"><h2>All Signals</h2></div>
         <div style="overflow:auto;max-height:600px">
           <table class="scanner">
-            <thead><tr><th style="width:36px">#</th><th style="width:70px">Stock</th><th style="width:120px">Setup</th><th style="width:140px">Score</th><th style="width:110px">Edge</th><th style="width:90px">Price</th><th style="width:90px">Signal</th></tr></thead>
+            <thead><tr><th style="width:36px">#</th><th style="width:70px">Stock</th><th style="width:120px">Setup</th><th style="width:140px">Score</th><th style="width:110px">Edge</th><th style="width:90px">Price</th><th style="width:65px">RS %ile</th><th style="width:90px">Grade</th></tr></thead>
             <tbody id="scannerFullRows"></tbody>
           </table>
         </div>
@@ -1473,6 +1474,11 @@ function tradeDetailHTML(s) {
     ${metricRow('vs S&P 500', `<span style="color:${s.relativeStrength>=0?'var(--green)':'var(--red)'}">${pct(s.relativeStrength)}</span>`, 'How this stock is performing compared to SPY')}
     ${metricRow('Weekly Trend', `<span style="color:${s.weeklyTrend>1?'var(--green)':s.weeklyTrend<-1?'var(--red)':'var(--muted)'}">${s.weeklyTrend!=null?(s.weeklyTrend>0?'+':'')+s.weeklyTrend+'%':'--'}</span>`, 'Price change over last 5 trading days')}
     ${metricRow('SPY Today', `<span style="color:${s.spyDayMove>0.3?'var(--green)':s.spyDayMove<-0.5?'var(--red)':'var(--muted)'}">${s.spyDayMove!=null?(s.spyDayMove>0?'+':'')+s.spyDayMove+'%':'--'}</span>`, "S&P 500 move today — don't fight the market")}
+    ${s.rs?.rs1m != null ? metricRow('RS 1 Month', `<span style="color:${s.rs.rs1m>3?'var(--green)':s.rs.rs1m<0?'var(--red)':'var(--muted)'}">${s.rs.rs1m>0?'+':''}${s.rs.rs1m}% vs SPY</span>`, '1-month return vs S&P 500') : ''}
+    ${s.rs?.rs3m != null ? metricRow('RS 3 Month', `<span style="color:${s.rs.rs3m>5?'var(--green)':s.rs.rs3m<0?'var(--red)':'var(--muted)'}">${s.rs.rs3m>0?'+':''}${s.rs.rs3m}% vs SPY</span>`, '3-month return vs S&P 500') : ''}
+    ${s.rs?.rs6m != null ? metricRow('RS 6 Month', `<span style="color:${s.rs.rs6m>5?'var(--green)':s.rs.rs6m<0?'var(--red)':'var(--muted)'}">${s.rs.rs6m>0?'+':''}${s.rs.rs6m}% vs SPY</span>`, '6-month return vs S&P 500') : ''}
+    ${s.rs?.rsPercentile != null ? metricRow('RS Percentile', `<span style="color:${s.rs.rsPercentile>=80?'var(--green)':s.rs.rsPercentile>=50?'var(--text2)':'var(--red)'}">${s.rs.rsPercentile}th percentile</span>`, 'How this stock ranks vs all other scanned stocks') : ''}
+    ${s.rs?.rsAccelerating ? metricRow('RS Trend', `<span style="color:var(--green)">Accelerating ▲</span>`, 'Short-term RS improving vs longer-term — momentum building') : ''}
   </div>`;
 
   if (s.macd) {
@@ -1673,8 +1679,9 @@ function renderDashboard(d) {
             <div><div style="font-size:9px;color:var(--muted)">STOP</div><div style="font-family:var(--font-mono);font-size:11px;color:var(--red)">${money(s.stop)}</div></div>
             <div><div style="font-size:9px;color:var(--muted)">TARGET</div><div style="font-family:var(--font-mono);font-size:11px;color:var(--green)">${money(s.target1)}</div></div>
           </div>
-          <div style="margin-top:8px;display:flex;gap:6px">
-            ${gradeTag(s.historicalGrade)}
+          <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+            ${s.grade ? signalGradeTag(s.grade) : gradeTag(s.historicalGrade)}
+            ${s.rs?.rsPercentile != null ? `<span style="font-size:10px;color:${s.rs.rsPercentile>=80?'var(--green)':'var(--muted)'}">RS ${s.rs.rsPercentile}%</span>` : ''}
             <span style="font-size:10px;color:var(--muted)">R/R: ${s.rr}</span>
           </div>
         </div>`).join('');
@@ -1699,6 +1706,7 @@ function renderDashboard(d) {
         <td style="font-family:var(--font-mono)">${money(s.price)}</td>
         <td style="font-family:var(--font-mono);color:${clr(s.changePct)}">${pct(s.changePct)}</td>
         <td style="font-size:10px">${s.sectorEtf ? `<span style="color:${s.sectorBullish===true?'var(--green)':s.sectorBullish===false?'var(--red)':'var(--muted)'}">${s.sectorEtf} ${s.sectorBullish===true?'▲':s.sectorBullish===false?'▼':'?'}</span>` : '--'}</td>
+        <td style="font-size:11px;font-family:var(--font-mono)">${s.rs?.rsPercentile != null ? `<span style="color:${s.rs.rsPercentile>=80?'var(--green)':s.rs.rsPercentile>=50?'var(--text2)':'var(--red)'}">${s.rs.rsPercentile}%</span>` : '--'}</td>
         <td>${s.grade ? signalGradeTag(s.grade) : chip(s.safety)}</td>
         <td>
           ${s.safety === 'TRADE_READY' ? `<button class="btn btn-green" style="font-size:10px;padding:4px 8px" onclick="event.stopPropagation();enterPaper('${s.symbol}')">Paper Buy</button>` : ''}
@@ -1935,7 +1943,8 @@ function renderFullScanner() {
         <td><div class="score-bar-wrap"><div class="score-bar"><div class="score-bar-fill" style="${scoreBarFill(s.confidence)}"></div></div><span class="score-num" style="color:${scoreColor(s.confidence)}">${s.confidence}</span></div></td>
         <td>${gradeTag(s.historicalGrade)}</td>
         <td style="font-family:var(--font-mono)">${money(s.price)}</td>
-        <td>${chip(s.safety)}</td>
+        <td style="font-size:10px">${s.rs?.rsPercentile != null ? `<span style="color:${s.rs.rsPercentile>=80?'var(--green)':s.rs.rsPercentile>=50?'var(--text2)':'var(--red)'}">RS ${s.rs.rsPercentile}%</span>` : '--'}</td>
+        <td>${s.grade ? signalGradeTag(s.grade) : chip(s.safety)}</td>
       </tr>`).join('');
   }
 }
