@@ -1,7 +1,7 @@
 {
   "name": "tradingmint-pro",
-  "version": "6.0.0",
-  "description": "TradingMint PRO v6.0 — MACD, ADX, Bollinger Bands, tighter stops, beginner-friendly UI, improved accuracy.",
+  "version": "6.6.0",
+  "description": "TradingMint PRO v6.6 \u2014 paper-safe scanner with base quality, RS grading, fundamentals/catalysts hooks, stricter validation, and guardrails.",
   "main": "src/server.js",
   "type": "commonjs",
   "scripts": {

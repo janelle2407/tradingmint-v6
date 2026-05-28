@@ -6,7 +6,9 @@
 const liveCache = new Map();
 const LIVE_CACHE_TTL = 60 * 1000;
 let consecutiveFailures = 0;
+let livePausedUntil = 0;
 const MAX_FAILURES = 5; // Stop trying live after too many failures
+const LIVE_FAILURE_COOLDOWN_MS = 10 * 60 * 1000;
 
 function isMarketHours() {
   const now = new Date();
@@ -95,6 +97,7 @@ async function fetchLiveQuote(symbol) {
       };
       liveCache.set(key, out);
       consecutiveFailures = 0;
+      livePausedUntil = 0;
       return out;
     } catch (e) {
       continue;
@@ -102,13 +105,21 @@ async function fetchLiveQuote(symbol) {
   }
 
   consecutiveFailures++;
+  if (consecutiveFailures >= MAX_FAILURES) {
+    livePausedUntil = Date.now() + LIVE_FAILURE_COOLDOWN_MS;
+  }
   throw new Error(`${clean}: all live endpoints failed`);
 }
 
 async function fetchLiveQuotes(symbols) {
   if (!isMarketHours()) return { quotes: {}, isLive: false, reason: "Market closed" };
-  if (consecutiveFailures >= MAX_FAILURES) {
-    return { quotes: {}, isLive: false, reason: `Live data paused after ${consecutiveFailures} failures` };
+  if (livePausedUntil && Date.now() < livePausedUntil) {
+    const mins = Math.ceil((livePausedUntil - Date.now()) / 60000);
+    return { quotes: {}, isLive: false, liveCount: 0, reason: `Live data cooling down after ${consecutiveFailures} failures. Retrying in ${mins} minute(s).` };
+  }
+  if (livePausedUntil && Date.now() >= livePausedUntil) {
+    consecutiveFailures = 0;
+    livePausedUntil = 0;
   }
 
   const results = {};
@@ -130,6 +141,10 @@ async function fetchLiveQuotes(symbols) {
   }
 
   const liveCount = Object.keys(results).length;
+  if (liveCount > 0) {
+    consecutiveFailures = 0;
+    livePausedUntil = 0;
+  }
   return {
     quotes: results,
     isLive: liveCount > 0,
