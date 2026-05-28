@@ -814,34 +814,46 @@ function gradeRank(grade) {
 }
 
 function assignSignalGrade(signal, marketRegime) {
-  const rsPct     = signal.rs?.rsPercentile || 0;
-  const rsNewHigh = Boolean(signal.rs?.rsLineNewHigh252 || signal.rs?.rsLineNewHigh63);
-  const baseScore = signal.baseQualityScore || 0;
-  const hasEdge   = Boolean(signal.historicalStats && Number(signal.historicalStats.trades || 0) >= 20);
-  const pf        = Number(signal.historicalStats?.profitFactor || 0);
+  const rsPct      = signal.rs?.rsPercentile || 0;
+  const rsNewHigh  = Boolean(signal.rs?.rsLineNewHigh252 || signal.rs?.rsLineNewHigh63);
+  const baseScore  = signal.baseQualityScore || 0;
+  const hasEdge    = Boolean(signal.historicalStats && Number(signal.historicalStats.trades || 0) >= 20);
+  const pf         = Number(signal.historicalStats?.profitFactor || 0);
   const sectorGood = signal.sectorBullish !== false;
-  const volumeOk  = Number(signal.volumeRatio || 0) >= 1.2;
-  const marketOk  = marketRegime === "BULLISH";
+  const volumeOk   = Number(signal.volumeRatio || 0) >= 1.2;
+  const marketBull = marketRegime === "BULLISH";
   const confidence = Number(signal.confidence || 0);
+  const isReady    = signal.safety === "TRADE_READY";
+  const isWatch    = signal.safety === "WATCHLIST";
 
+  // A+ — best possible: market bullish, everything aligned, rare by design
   if (
-    signal.safety === "TRADE_READY" && marketOk &&
-    confidence >= 88 && rsPct >= 85 && rsNewHigh &&
-    baseScore >= 70 && hasEdge && pf >= 1.25 && sectorGood && volumeOk
+    (isReady || (isWatch && marketBull)) &&
+    marketBull && confidence >= 88 &&
+    rsPct >= 85 && rsNewHigh &&
+    baseScore >= 65 && hasEdge && pf >= 1.25 && sectorGood && volumeOk
   ) return "A+";
 
+  // A — strong setup, most filters pass
   if (
-    signal.safety === "TRADE_READY" &&
+    (isReady || isWatch) &&
     confidence >= 82 && rsPct >= 70 &&
-    baseScore >= 55 && hasEdge && sectorGood
+    baseScore >= 50 && hasEdge && sectorGood
   ) return "A";
 
+  // B — valid setup, above threshold, most indicators aligned
   if (
-    signal.safety === "TRADE_READY" &&
+    (isReady || isWatch) &&
     confidence >= 76 && rsPct >= 50
   ) return "B";
 
-  if (signal.safety === "WATCHLIST" && confidence >= 68) return "C";
+  // C — watchlist quality, shows some strength
+  if (
+    (isReady || isWatch) &&
+    confidence >= 65
+  ) return "C";
+
+  // D — below threshold, skip
   return "D";
 }
 
