@@ -614,17 +614,15 @@ label { font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: 
         <table class="scanner">
           <thead>
             <tr>
-              <th style="width:36px">#</th>
-              <th style="width:70px">Stock</th>
-              <th style="width:120px">Setup</th>
-              <th style="width:140px">Score</th>
-              <th style="width:120px">Edge</th>
-              <th style="width:90px">Price</th>
-              <th style="width:70px">Change</th>
-              <th style="width:55px">Sector</th>
-              <th style="width:60px">RS %ile</th>
+              <th style="width:30px">#</th>
+              <th style="width:55px">Stock</th>
+              <th style="width:100px">Setup</th>
+              <th style="width:120px">Score</th>
+              <th style="width:90px">Edge</th>
+              <th style="width:75px">Price</th>
+              <th style="width:55px">RS%</th>
               <th style="width:80px">Grade</th>
-              <th style="width:70px">Buy</th>
+              <th style="width:65px">Buy</th>
             </tr>
           </thead>
           <tbody id="scannerRows"></tbody>
@@ -676,7 +674,7 @@ label { font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: 
         <div class="card-head"><h2>All Signals</h2></div>
         <div style="overflow:auto;max-height:600px">
           <table class="scanner">
-            <thead><tr><th style="width:36px">#</th><th style="width:70px">Stock</th><th style="width:120px">Setup</th><th style="width:140px">Score</th><th style="width:110px">Edge</th><th style="width:90px">Price</th><th style="width:65px">RS %ile</th><th style="width:90px">Grade</th></tr></thead>
+            <thead><tr><th style="width:30px">#</th><th style="width:55px">Stock</th><th style="width:100px">Setup</th><th style="width:120px">Score</th><th style="width:90px">Edge</th><th style="width:75px">Price</th><th style="width:55px">RS%</th><th style="width:80px">Grade</th></tr></thead>
             <tbody id="scannerFullRows"></tbody>
           </table>
         </div>
@@ -1743,9 +1741,7 @@ function renderDashboard(d) {
           </div>
         </td>
         <td>${gradeTag(s.historicalGrade)}</td>
-        <td style="font-family:var(--font-mono)">${money(s.price)}</td>
-        <td style="font-family:var(--font-mono);color:${clr(s.changePct)}">${pct(s.changePct)}</td>
-        <td style="font-size:10px">${s.sectorEtf ? `<span style="color:${s.sectorBullish===true?'var(--green)':s.sectorBullish===false?'var(--red)':'var(--muted)'}">${s.sectorEtf} ${s.sectorBullish===true?'▲':s.sectorBullish===false?'▼':'?'}</span>` : '--'}</td>
+        <td style="font-family:var(--font-mono);font-size:11px">${money(s.price)}</td>
         <td style="font-size:11px;font-family:var(--font-mono)">${s.rs?.rsPercentile != null ? `<span style="color:${s.rs.rsPercentile>=80?'var(--green)':s.rs.rsPercentile>=50?'var(--text2)':'var(--red)'}">${s.rs.rsPercentile}%</span>` : '--'}</td>
         <td>${s.grade ? signalGradeTag(s.grade) : chip(s.safety)}</td>
         <td>
