@@ -79,6 +79,24 @@ async function scanMarket({ symbols = [] }) {
   }
   return results.sort((a, b) => b.score - a.score);
 }
+function rsi(values, period = 14) {
+  if (!values || values.length < period + 1) return null;
 
-module.exports = { scanMarket, ema };
+  let gains = 0;
+  let losses = 0;
+
+  for (let i = values.length - period; i < values.length; i++) {
+    const diff = values[i] - values[i - 1];
+    if (diff > 0) gains += diff;
+    else losses -= diff;
+  }
+
+  if (losses === 0) return 100;
+
+  const rs = gains / losses;
+  return 100 - (100 / (1 + rs));
+}
+
+module.exports = { scanMarket, ema, rsi };
+
 
