@@ -2005,7 +2005,7 @@ function renderWalkForward(result) {
       <div class="metric-block"><div class="mb-label">Win Rate</div><div class="mb-val" style="color:${(s.winRate||0)>=50?'var(--green)':'var(--yellow)'}">${s.winRate || '--'}%</div></div>
       <div class="metric-block"><div class="mb-label">Expectancy R</div><div class="mb-val" style="color:${(s.expectancyR||0)>0?'var(--green)':'var(--red)'}">${s.expectancyR != null ? s.expectancyR+'R' : '--'}</div><div class="mb-desc">Avg R per trade</div></div>
       <div class="metric-block"><div class="mb-label">Profit Factor</div><div class="mb-val" style="color:${(s.profitFactor||0)>=1.5?'var(--green)':'var(--yellow)'}">${s.profitFactor || '--'}</div></div>
-      <div class="metric-block"><div class="mb-label">Folds Run</div><div class="mb-val">${result.folds?.length || 0}</div><div class="mb-desc">Train/test windows</div></div>
+      <div class="metric-block"><div class="mb-label">Fold Pass Rate</div><div class="mb-val" style="color:${(result.foldPassRate||0)>=60?'var(--green)':'var(--yellow)'}">${result.foldPassRate != null ? result.foldPassRate+'%' : '--'}</div><div class="mb-desc">${result.positiveFolds||0}/${result.folds?.length||0} folds positive</div></div>
       <div class="metric-block"><div class="mb-label">Test Window</div><div class="mb-val" style="font-size:14px">${result.testBars || '--'}</div><div class="mb-desc">Days per test</div></div>
     </div>`;
 
@@ -2015,7 +2015,7 @@ function renderWalkForward(result) {
       <thead><tr><th>Fold</th><th>Test Window</th><th>Trades</th><th>Win Rate</th><th>Expectancy R</th><th>Pass?</th></tr></thead>
       <tbody>${result.folds.map((f,i) => {
         const ts = f.testSummary || {};
-        const ok = (ts.trades||0)>=5 && (ts.expectancyR||0)>0;
+        const ok = f.passed !== undefined ? f.passed : ((ts.trades||0)>=5 && (ts.expectancyR||0)>0);
         return `<tr>
           <td style="color:var(--muted)">#${i+1}</td>
           <td style="font-size:10px;color:var(--text2)">${f.testWindow?.start||'?'} – ${f.testWindow?.end||'?'}</td>
@@ -2074,6 +2074,9 @@ function renderReport(report) {
         ${Object.entries(data).map(([name,d]) => `<tr><td>${name}</td><td>${d.trades||0}</td><td style="color:${(d.winRate||0)>=50?'var(--green)':'var(--yellow)'}">${d.winRate||'--'}%</td><td style="color:${clr(d.totalPnl)}">${money(d.totalPnl)}</td></tr>`).join('')}
         </tbody></table></div>`;
     };
+    html += renderBreakdown('By Signal Grade (A+ to D)', report.gradeBreakdown);
+    html += renderBreakdown('By Market Regime', report.regimeBreakdown);
+    html += renderBreakdown('By RS Percentile Bucket', report.rsBreakdown);
     html += renderBreakdown('By Setup Type', report.setupBreakdown);
     html += renderBreakdown('By Sector', report.sectorBreakdown);
     breakBox.innerHTML = html || '<div style="color:var(--muted);font-size:12px">No breakdown data yet.</div>';

@@ -526,6 +526,9 @@ function buildSignal(symbol, bars, spyMove21, marketBias, settings = {}, histori
   const trendBull = price > ema20 && price > ema50 && (!sma200 || price > sma200);
   const setup = classifySetup(price, high20, low20, ema20, ema50, sma200, rsi14, macdData, adxVal, bb);
 
+  // ── Base Quality / VCP ──
+  const baseQuality = detectBaseQuality(bars);
+
   // ── Relative Strength vs SPY ──
   const spyClosesForRs = (barsBySymbol.SPY || []).map(b => b.close);
   const rs = calcRelativeStrength(closes, spyClosesForRs);

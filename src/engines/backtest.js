@@ -174,9 +174,11 @@ function runSignalBacktest(symbol, bars, options = {}, barsBySymbol = {}) {
   const etfBars   = barsBySymbol[etfSymbol] || [];
 
   // Cache regime every 10 bars for speed
+  // Regime cache: recalculate every 50 bars (balance accuracy vs performance)
+  // historicalBreadthAtIndex is expensive - loops all symbols
   const regimeCache = new Map();
   function getCachedRegime(idx) {
-    const bucket = Math.floor(idx / 10) * 10;
+    const bucket = Math.floor(idx / 50) * 50;
     if (!regimeCache.has(bucket)) {
       regimeCache.set(bucket, historicalRegimeAtIndex(barsBySymbol, bucket));
     }
