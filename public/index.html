@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>TradingMint PRO v6.5</title>
+<title>TradingMint PRO v6.6</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@700;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
@@ -420,7 +420,7 @@ label { font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: 
     <div class="logo-mark">M</div>
     <div class="logo-text">
       <div class="brand">TRADINGMINT</div>
-      <div class="sub">PRO v6.5 · Paper Only</div>
+      <div class="sub">PRO v6.6 · Paper Only</div>
     </div>
   </div>
 
@@ -1498,6 +1498,27 @@ function tradeDetailHTML(s) {
     </div>`;
   }
 
+  // Base Quality / VCP panel
+  if (s.baseQuality) {
+    const bq = s.baseQuality;
+    const bqColor = bq.score >= 70 ? 'var(--green)' : bq.score >= 45 ? 'var(--yellow)' : 'var(--red)';
+    html += `<div style="background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:12px">
+      <div style="font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);margin-bottom:8px">Base / VCP Quality</div>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+        <span style="font-family:var(--font-mono);font-size:16px;color:${bqColor}">${bq.score}/100</span>
+        <span style="font-size:11px;color:${bqColor};font-weight:600">${bq.label}</span>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;text-align:center">
+        <div><div style="font-family:var(--font-mono);font-size:14px">${bq.baseDepthPct ?? '--'}%</div><div style="font-size:9px;color:var(--muted)">DEPTH</div></div>
+        <div><div style="font-family:var(--font-mono);font-size:14px">${bq.volumeDryUpPct ?? '--'}%</div><div style="font-size:9px;color:var(--muted)">VOL DRY-UP</div></div>
+        <div><div style="font-family:var(--font-mono);font-size:14px">${bq.contractionCount ?? '--'}</div><div style="font-size:9px;color:var(--muted)">CONTRACTIONS</div></div>
+        <div><div style="font-family:var(--font-mono);font-size:14px">${bq.rangeTightness10d ?? '--'}%</div><div style="font-size:9px;color:var(--muted)">10D TIGHT</div></div>
+        <div><div style="font-family:var(--font-mono);font-size:14px">${bq.distanceFromPivotPct ?? '--'}%</div><div style="font-size:9px;color:var(--muted)">FROM PIVOT</div></div>
+        <div><div style="font-family:var(--font-mono);font-size:14px">${bq.failedBreakoutCount ?? '--'}</div><div style="font-size:9px;color:var(--muted)">FAIL BOs</div></div>
+      </div>
+    </div>`;
+  }
+
   // Sector ETF momentum
   if (s.sectorEtf) {
     const sc = s.sectorBullish;
@@ -1543,6 +1564,16 @@ function tradeDetailHTML(s) {
     html += `<div style="margin-top:10px;background:rgba(248,113,113,.06);border:1px solid rgba(248,113,113,.2);border-radius:6px;padding:10px">
       <div style="font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--red);margin-bottom:6px">Why not TRADE_READY</div>
       ${s.rejectedReasons.map(r => `<div style="font-size:11.5px;color:var(--text2);padding:3px 0;border-bottom:1px solid rgba(248,113,113,.1)">✗ ${r}</div>`).join('')}
+    </div>`;
+  }
+
+  // Inactive filter warnings
+  const inactiveWarnings = [];
+  if (!s.earningsFilterActive) inactiveWarnings.push("ℹ️ Earnings filter inactive — no calendar connected");
+  if (inactiveWarnings.length) {
+    html += `<div style="background:rgba(251,191,36,.06);border:1px solid rgba(251,191,36,.2);border-radius:6px;padding:8px 10px;margin-top:8px">
+      <div style="font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--yellow);margin-bottom:4px">Inactive Filters</div>
+      ${inactiveWarnings.map(w => `<div style="font-size:11px;color:var(--text2)">${w}</div>`).join('')}
     </div>`;
   }
 

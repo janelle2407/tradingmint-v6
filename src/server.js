@@ -8,7 +8,7 @@ const { exposureSummary } = require("./engines/correlation");
 const { createSqliteAdapter } = require("./storage/sqliteAdapter"); const { riskLockout } = require("./engines/risk");
 const { getMarketSession, isEntryStillValid } = require("./engines/marketHours");
 const { fetchLiveQuotes, mergeLiveIntoBars, isMarketHours } = require("./data/liveQuotes");
-const app=express(); const PORT=process.env.PORT||10000; const VERSION="6.5.0-rs-grades-regime-fixes"; app.use(express.json({limit:"1mb"})); app.use(express.static(path.join(__dirname,"../public"))); let lastUniverse=null,lastUniverseTime=0;
+const app=express(); const PORT=process.env.PORT||10000; const VERSION="6.6.0-vcp-base-quality-historical-regime-walkforward"; app.use(express.json({limit:"1mb"})); app.use(express.static(path.join(__dirname,"../public"))); let lastUniverse=null,lastUniverseTime=0;
 async function getUniverse(force=false){
   // Fix 2: Separate completed daily bars from live quotes
   // completedBarsBySymbol = historical EOD bars used for ALL indicator calculations

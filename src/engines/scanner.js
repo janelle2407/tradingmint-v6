@@ -1,6 +1,10 @@
 const { round, percentMove } = require("../data/marketData");
 const { sectorEtfOf } = require("../data/sectorMap");
 
+// Optional fundamentals — won't crash if not connected
+let getFundamentalSnapshot = null, getCatalystSnapshot = null;
+try { ({ getFundamentalSnapshot, getCatalystSnapshot } = require("../data/fundamentals")); } catch {}
+
 // ─── Technical Indicators ──────────────────────────────────────────────────
 
 function sma(values, period) {
@@ -327,6 +331,122 @@ function getSectorEtfScore(symbol, barsBySymbol) {
   return { score, bullish, etf, reasons, price: round(price), ema20: round(ema20v) };
 }
 
+// ─── Base Quality / VCP Detection ────────────────────────────────────────────
+// Scores base depth, contraction, volume dry-up, pivot proximity
+// Inspired by Minervini and O'Neil style base analysis
+
+function maxHigh(bars) { return Math.max(...bars.map(b => Number(b.high)).filter(Number.isFinite)); }
+function minLow(bars)  { return Math.min(...bars.map(b => Number(b.low)).filter(Number.isFinite)); }
+function avgVolume(bars) {
+  const vols = bars.map(b => Number(b.volume || 0)).filter(Number.isFinite);
+  return vols.length ? vols.reduce((s, v) => s + v, 0) / vols.length : null;
+}
+
+function detectBaseQuality(bars) {
+  if (!Array.isArray(bars) || bars.length < 80) {
+    return { score: 0, label: "NO BASE DATA", reasons: [], warnings: ["Not enough history to evaluate base quality."] };
+  }
+  const recent   = bars.slice(-63);
+  const last20   = bars.slice(-20);
+  const last10   = bars.slice(-10);
+  const prior20  = bars.slice(-40, -20);
+  const baseHigh = maxHigh(recent);
+  const baseLow  = minLow(recent);
+  const lastPrice = bars.at(-1).close;
+  const baseDepthPct = baseHigh && baseLow ? ((baseHigh - baseLow) / baseHigh) * 100 : null;
+  const range10  = maxHigh(last10) - minLow(last10);
+  const range20  = maxHigh(last20) - minLow(last20);
+  const range40  = maxHigh(bars.slice(-40)) - minLow(bars.slice(-40));
+  const tightness10Pct = lastPrice ? (range10 / lastPrice) * 100 : null;
+  const rangeContracting = Number.isFinite(range10) && Number.isFinite(range20) && Number.isFinite(range40) && range10 < range20 && range20 < range40;
+  const vol10 = avgVolume(last10);
+  const volPrior20 = avgVolume(prior20);
+  const volumeDryUpPct = volPrior20 && vol10 ? ((volPrior20 - vol10) / volPrior20) * 100 : null;
+  const pivotPrice = maxHigh(last20);
+  const distanceFromPivotPct = pivotPrice && lastPrice ? ((lastPrice - pivotPrice) / pivotPrice) * 100 : null;
+  let contractionCount = 0;
+  const blocks = [bars.slice(-63, -42), bars.slice(-42, -21), bars.slice(-21)];
+  const blockRanges = blocks.map(block => {
+    if (!block.length) return null;
+    const h = maxHigh(block), l = minLow(block), mid = (h + l) / 2;
+    return mid ? ((h - l) / mid) * 100 : null;
+  }).filter(Number.isFinite);
+  for (let i = 1; i < blockRanges.length; i++) if (blockRanges[i] < blockRanges[i - 1]) contractionCount++;
+  let failedBreakoutCount = 0;
+  for (let i = Math.max(20, bars.length - 63); i < bars.length - 3; i++) {
+    const priorHigh = maxHigh(bars.slice(i - 20, i));
+    const breakout  = bars[i].close > priorHigh * 1.005;
+    const failed    = breakout && bars[i + 1]?.close < priorHigh && bars[i + 2]?.close < priorHigh;
+    if (failed) failedBreakoutCount++;
+  }
+  let score = 0;
+  const reasons = [], warnings = [];
+  if (baseDepthPct != null && baseDepthPct <= 25) { score += 20; reasons.push(`Base depth ${baseDepthPct.toFixed(1)}% is controlled.`); }
+  else if (baseDepthPct != null && baseDepthPct <= 35) { score += 10; warnings.push(`Base depth ${baseDepthPct.toFixed(1)}% is a bit wide.`); }
+  else if (baseDepthPct != null) warnings.push(`Base depth ${baseDepthPct.toFixed(1)}% is too deep for a clean growth setup.`);
+  if (rangeContracting) { score += 20; reasons.push("Price ranges are contracting — sellers drying up."); }
+  if (contractionCount >= 2) { score += 15; reasons.push("Multiple volatility contractions detected."); }
+  else if (contractionCount === 1) score += 8;
+  if (tightness10Pct != null && tightness10Pct <= 6) { score += 15; reasons.push(`Last 10-day range is tight at ${tightness10Pct.toFixed(1)}%.`); }
+  else if (tightness10Pct != null && tightness10Pct > 10) warnings.push(`Last 10-day range is loose at ${tightness10Pct.toFixed(1)}%.`);
+  if (volumeDryUpPct != null && volumeDryUpPct >= 20) { score += 15; reasons.push(`Volume dried up ${volumeDryUpPct.toFixed(0)}% — constructive base trait.`); }
+  if (distanceFromPivotPct != null && distanceFromPivotPct >= -3 && distanceFromPivotPct <= 3) { score += 10; reasons.push("Price close to pivot — not extended."); }
+  else if (distanceFromPivotPct != null && distanceFromPivotPct > 5) warnings.push("Price extended above pivot. Avoid chasing.");
+  if (failedBreakoutCount === 0) score += 5;
+  else { score -= Math.min(20, failedBreakoutCount * 8); warnings.push(`${failedBreakoutCount} failed breakout attempt(s) in the base.`); }
+  score = Math.max(0, Math.min(100, Math.round(score)));
+  return {
+    score, label: score >= 80 ? "ELITE BASE" : score >= 65 ? "STRONG BASE" : score >= 45 ? "FAIR BASE" : "WEAK BASE",
+    baseLengthDays: recent.length,
+    baseDepthPct: baseDepthPct != null ? Number(baseDepthPct.toFixed(1)) : null,
+    contractionCount,
+    lastContractionDepthPct: blockRanges.at(-1) != null ? Number(blockRanges.at(-1).toFixed(1)) : null,
+    rangeTightness10d: tightness10Pct != null ? Number(tightness10Pct.toFixed(1)) : null,
+    volumeDryUpPct: volumeDryUpPct != null ? Number(volumeDryUpPct.toFixed(1)) : null,
+    pivotPrice: pivotPrice ? Number(pivotPrice.toFixed(2)) : null,
+    distanceFromPivotPct: distanceFromPivotPct != null ? Number(distanceFromPivotPct.toFixed(1)) : null,
+    failedBreakoutCount, reasons, warnings
+  };
+}
+
+// ─── Setup-Specific Volume Scoring ────────────────────────────────────────────
+
+function setupVolumeScore(setup, bars, volumeRatio, baseQuality = null) {
+  const reasons = [], warnings = [];
+  let score = 0;
+  if (!Array.isArray(bars) || bars.length < 50 || !Number.isFinite(volumeRatio)) {
+    return { score: 0, reasons, warnings: ["Volume data insufficient."] };
+  }
+  const last = bars.at(-1);
+  const prev = bars.at(-2);
+  const lastRed = last.close < last.open;
+  const lastGreen = last.close >= last.open;
+  const vol10 = avgVolume(bars.slice(-10));
+  const priorVol20 = avgVolume(bars.slice(-40, -20));
+  const dryUp = priorVol20 && vol10 ? ((priorVol20 - vol10) / priorVol20) * 100 : 0;
+  if (setup === "Breakout") {
+    if (volumeRatio >= 1.8) { score += 14; reasons.push(`Breakout volume very strong at ${volumeRatio.toFixed(1)}x average.`); }
+    else if (volumeRatio >= 1.4) { score += 10; reasons.push(`Breakout volume confirms at ${volumeRatio.toFixed(1)}x average.`); }
+    else { score -= 8; warnings.push("Breakout volume weak. Strong breakouts need clear volume expansion."); }
+  } else if (setup === "EMA Bounce") {
+    if (lastGreen && prev && last.volume > prev.volume) { score += 8; reasons.push("Bounce volume improving from prior day."); }
+    if (volumeRatio < 0.8) warnings.push("Bounce volume quiet — confirmation still light.");
+  } else if (setup === "Squeeze Breakout") {
+    if (dryUp >= 15 && volumeRatio >= 1.3) { score += 12; reasons.push("Volume dry-up then expansion — constructive breakout."); }
+    else if (dryUp >= 15) { score += 5; reasons.push("Volume dried up during squeeze."); }
+    else warnings.push("Squeeze lacks clear volume dry-up.");
+  } else if (setup === "Pullback") {
+    if (lastRed && volumeRatio >= 1.3) { score -= 10; warnings.push("Pullback on heavy red volume — possible distribution."); }
+    else if (volumeRatio <= 0.9) { score += 6; reasons.push("Pullback volume quiet — constructive."); }
+  } else if (setup === "Momentum") {
+    if (volumeRatio >= 1.2) { score += 7; reasons.push("Momentum move has supportive volume."); }
+  }
+  if (baseQuality?.volumeDryUpPct >= 20 && volumeRatio >= 1.2) {
+    score += 5; reasons.push("Volume pattern: dry-up followed by renewed demand.");
+  }
+  return { score, reasons, warnings };
+}
+
 // ─── Relative Strength Engine ─────────────────────────────────────────────────
 // Calculates RS vs SPY over multiple timeframes — the way professional traders do it
 // Higher RS = stock is outperforming the market = higher quality setup
@@ -458,10 +578,25 @@ function buildSignal(symbol, bars, spyMove21, marketBias, settings = {}, histori
   else if (rsi14 > 74) warnings.push(`RSI (${round(rsi14)}) is overbought — avoid chasing this move.`);
   else warnings.push(`RSI (${round(rsi14)}) is not bullish enough yet.`);
 
-  // Volume — raised to 1.3x in v6
-  if (volumeRatio && volumeRatio >= 1.3) { technicalScore += 8; reasons.push(`Volume is ${round(volumeRatio, 1)}x above average — strong buyer interest.`); }
-  else if (volumeRatio && volumeRatio >= 1.1) { technicalScore += 3; }
-  else if (volumeRatio) warnings.push("Volume is not confirming the move yet.");
+  // Setup-specific volume scoring
+  const volSetup = setupVolumeScore(setup, bars, volumeRatio, baseQuality);
+  technicalScore += volSetup.score;
+  for (const r of volSetup.reasons) reasons.push(r);
+  for (const w of volSetup.warnings) warnings.push(w);
+  // Small generic volume score still applies
+  if (volumeRatio && volumeRatio >= 1.3) technicalScore += 3;
+  else if (volumeRatio && volumeRatio < 0.8) technicalScore -= 3;
+
+  // Base quality scoring
+  if (baseQuality.score >= 80) { technicalScore += 12; reasons.push(`Base quality is elite: ${baseQuality.label}.`); }
+  else if (baseQuality.score >= 65) { technicalScore += 8; reasons.push(`Base quality is strong: ${baseQuality.label}.`); }
+  else if (baseQuality.score >= 45) technicalScore += 3;
+  else if (setup === "Breakout" || setup === "Squeeze Breakout") {
+    technicalScore -= 8;
+    warnings.push("Breakout setup has weak base quality.");
+  }
+  for (const r of baseQuality.reasons || []) reasons.push(r);
+  for (const w of baseQuality.warnings || []) warnings.push(w);
 
   // Support/resistance proximity
   const high52 = bars.length >= 252 ? Math.max(...bars.slice(-252).map(b => b.high)) : high20;
@@ -605,25 +740,9 @@ function buildSignal(symbol, bars, spyMove21, marketBias, settings = {}, histori
   ) safety = "TRADE_READY";
   else if (confidence >= 62) safety = "WATCHLIST";
 
-  // ── Signal Grade (A+ to D) ──
-  // Professional quality label based on all filters combined
-  let grade = "D";
-  const rsScore = rs.rs3m != null ? rs.rs3m : 0;
-  const hasEdge = edge.passed;
-  const sectorGood = sectorCheck.bullish !== false;
-  const weeklyGood = bars.length >= 6 && (bars.at(-1).close > (bars.at(-6)?.close || 0));
-
-  if (safety === "TRADE_READY" && confidence >= 88 && rsScore > 10 && hasEdge && rs.rsLineNewHigh63 && sectorGood) {
-    grade = "A+"; // Best possible: everything aligned
-  } else if (safety === "TRADE_READY" && confidence >= 82 && rsScore > 3 && hasEdge && sectorGood) {
-    grade = "A";  // Strong valid setup
-  } else if (safety === "TRADE_READY" && confidence >= 76) {
-    grade = "B";  // Valid but missing one ingredient
-  } else if (safety === "WATCHLIST" && confidence >= 68) {
-    grade = "C";  // Watch only
-  } else {
-    grade = "D";  // Reject
-  }
+  // Grade is assigned in scanMarket() after RS percentiles are calculated
+  // so grade is initially null here — scanMarket will set it
+  const grade = null;
 
   // Why rejected summary — helps user understand what's missing
   const rejectedReasons = [];
@@ -676,10 +795,51 @@ function buildSignal(symbol, bars, spyMove21, marketBias, settings = {}, histori
     sectorEtf: sectorCheck.etf,
     sectorBullish: sectorCheck.bullish,
     sectorScore: sectorCheck.score,
+    baseQuality,
+    baseQualityScore: baseQuality.score,
+    baseQualityLabel: baseQuality.label,
     reasons,
     warnings,
     bars: bars.slice(-180)
   };
+}
+
+// ─── Grade Assignment ────────────────────────────────────────────────────────
+
+function gradeRank(grade) {
+  return grade === "A+" ? 5 : grade === "A" ? 4 : grade === "B" ? 3 : grade === "C" ? 2 : 1;
+}
+
+function assignSignalGrade(signal, marketRegime) {
+  const rsPct     = signal.rs?.rsPercentile || 0;
+  const rsNewHigh = Boolean(signal.rs?.rsLineNewHigh252 || signal.rs?.rsLineNewHigh63);
+  const baseScore = signal.baseQualityScore || 0;
+  const hasEdge   = Boolean(signal.historicalStats && Number(signal.historicalStats.trades || 0) >= 20);
+  const pf        = Number(signal.historicalStats?.profitFactor || 0);
+  const sectorGood = signal.sectorBullish !== false;
+  const volumeOk  = Number(signal.volumeRatio || 0) >= 1.2;
+  const marketOk  = marketRegime === "BULLISH";
+  const confidence = Number(signal.confidence || 0);
+
+  if (
+    signal.safety === "TRADE_READY" && marketOk &&
+    confidence >= 88 && rsPct >= 85 && rsNewHigh &&
+    baseScore >= 70 && hasEdge && pf >= 1.25 && sectorGood && volumeOk
+  ) return "A+";
+
+  if (
+    signal.safety === "TRADE_READY" &&
+    confidence >= 82 && rsPct >= 70 &&
+    baseScore >= 55 && hasEdge && sectorGood
+  ) return "A";
+
+  if (
+    signal.safety === "TRADE_READY" &&
+    confidence >= 76 && rsPct >= 50
+  ) return "B";
+
+  if (signal.safety === "WATCHLIST" && confidence >= 68) return "C";
+  return "D";
 }
 
 // ─── Market Scan ───────────────────────────────────────────────────────────
@@ -713,7 +873,21 @@ function scanMarket(barsBySymbol, settings = {}, historicalEdges = {}, liveQuote
   // Add RS percentile across the full universe
   addRsPercentiles(signals);
 
+  // Calculate final regime for grade assignment
   const finalRegime = marketRegimeFromSignals(signals, vix, barsBySymbol);
+
+  // Assign grades using RS percentile + base quality + market regime
+  for (const s of signals) {
+    s.grade = assignSignalGrade(s, finalRegime.regime);
+  }
+
+  // Sort by grade first, then confidence
+  signals.sort((a, b) => {
+    const g = gradeRank(b.grade) - gradeRank(a.grade);
+    if (g !== 0) return g;
+    return b.confidence - a.confidence;
+  });
+  signals.forEach((s, i) => { s.rank = i + 1; });
   const spySignal = signals.find(s => s.symbol === "SPY");
   const qqqSignal = signals.find(s => s.symbol === "QQQ");
   const sectorLeader = findSectorLeader(signals.filter(s => s.trend === "UP"));
