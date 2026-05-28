@@ -97,6 +97,13 @@ function rsi(values, period = 14) {
   return 100 - (100 / (1 + rs));
 }
 
-module.exports = { scanMarket, ema, rsi };
+module.exports = {
+  scanMarket,
+  ema,
+  sma,
+  rsi,
+  atr
+};
+
 
 
