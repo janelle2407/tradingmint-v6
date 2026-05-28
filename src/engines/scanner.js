@@ -80,4 +80,5 @@ async function scanMarket({ symbols = [] }) {
   return results.sort((a, b) => b.score - a.score);
 }
 
-module.exports = { scanMarket };
+module.exports = { scanMarket, ema };
+
