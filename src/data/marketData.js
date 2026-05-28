@@ -117,4 +117,34 @@ async function fetchUniverse(symbols = DEFAULT_SYMBOLS, limit = 70, range = "max
   return { barsBySymbol, metaBySymbol, errors, requested: unique, range, interval: "1d", rangeFallbacks: RANGE_FALLBACKS };
 }
 
-module.exports = { DEFAULT_SYMBOLS, RANGE_FALLBACKS, yahooBars, yahooBarsWithFallback, fetchUniverse, round, percentMove };
+
+function dataQualityScore(bars) {
+  if (!Array.isArray(bars) || bars.length < 200) {
+    return { score: 0, label: "POOR", warnings: ["Too few bars — need at least 200."] };
+  }
+  let score = 100;
+  const warnings = [];
+  const zeroDays = bars.filter(b => Number(b.volume || 0) === 0).length;
+  if (zeroDays > 5) { score -= 15; warnings.push(`${zeroDays} zero-volume bars detected.`); }
+  const badOhlc = bars.filter(b =>
+    !Number.isFinite(b.open) || !Number.isFinite(b.high) || !Number.isFinite(b.low) || !Number.isFinite(b.close) ||
+    b.high < b.low || b.close <= 0
+  ).length;
+  if (badOhlc > 0) { score -= 25; warnings.push(`${badOhlc} bad OHLC bars detected.`); }
+  const hugeGaps = [];
+  for (let i = 1; i < bars.length; i++) {
+    const prev = bars[i - 1].close, curr = bars[i].close;
+    if (prev > 0 && curr > 0) {
+      const move = Math.abs((curr - prev) / prev) * 100;
+      if (move > 40) hugeGaps.push({ date: bars[i].date, move: Number(move.toFixed(1)) });
+    }
+  }
+  if (hugeGaps.length) { score -= 10; warnings.push(`${hugeGaps.length} very large price gaps — check for splits.`); }
+  score = Math.max(0, Math.min(100, score));
+  return {
+    score, warnings,
+    label: score >= 90 ? "EXCELLENT" : score >= 75 ? "GOOD" : score >= 50 ? "FAIR" : "POOR"
+  };
+}
+
+module.exports = { DEFAULT_SYMBOLS, RANGE_FALLBACKS, yahooBars, yahooBarsWithFallback, fetchUniverse, round, percentMove, dataQualityScore };

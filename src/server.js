@@ -8,7 +8,7 @@ const { exposureSummary } = require("./engines/correlation");
 const { createSqliteAdapter } = require("./storage/sqliteAdapter"); const { riskLockout } = require("./engines/risk");
 const { getMarketSession, isEntryStillValid } = require("./engines/marketHours");
 const { fetchLiveQuotes, mergeLiveIntoBars, isMarketHours } = require("./data/liveQuotes");
-const app=express(); const PORT=process.env.PORT||10000; const VERSION="6.6.0-paper-safe-accuracy-pack"; app.use(express.json({limit:"1mb"})); app.use(express.static(path.join(__dirname,"../public"))); let lastUniverse=null,lastUniverseTime=0;
+const app=express(); const PORT=process.env.PORT||10000; const VERSION="6.6.0-vcp-base-quality-historical-regime-walkforward"; app.use(express.json({limit:"1mb"})); app.use(express.static(path.join(__dirname,"../public"))); let lastUniverse=null,lastUniverseTime=0;
 async function getUniverse(force=false){
   // Fix 2: Separate completed daily bars from live quotes
   // completedBarsBySymbol = historical EOD bars used for ALL indicator calculations
@@ -78,7 +78,7 @@ app.post("/api/paper/exit",(req,res)=>{const db=readDb();const result=exitPaper(
 app.get("/api/journal",(req,res)=>{const db=readDb();res.json({ok:true,journal:db.journal});});
 app.post("/api/backtest/run",async(req,res)=>{try{const db=readDb();const universe=await getUniverse(req.query.force==="1");const result=runPortfolioBacktest(universe.barsBySymbol,{...db.settings,...(req.body||{})});db.historicalEdges=result.edges||db.historicalEdges;db.backtests.unshift(result);db.backtests=db.backtests.slice(0,30);addJournal(db,"BACKTEST_RUN_3Y","-","max-history backtest completed and historical edges updated",result.summary);writeDb(db);res.json({ok:true,result});}catch(error){res.status(500).json({ok:false,error:error.message});}});
 app.post("/api/optimizer/run",async(req,res)=>{try{const db=readDb();const universe=await getUniverse(req.query.force==="1");const result=optimize(universe.barsBySymbol,{...db.settings,...(req.body||{})});db.optimizerRuns.unshift(result);db.optimizerRuns=db.optimizerRuns.slice(0,30);addJournal(db,"OPTIMIZER_RUN","-","Optimizer completed with guardrails",result.best?.summary||{});writeDb(db);res.json({ok:true,result});}catch(error){res.status(500).json({ok:false,error:error.message});}});
-app.post("/api/optimizer/apply",(req,res)=>{const db=readDb();const latest=db.optimizerRuns[0];if(!latest||!latest.best||!latest.best.options)return res.status(400).json({ok:false,error:"No optimizer result available to apply."});const best=latest.best;const summary=best.summary||{};const guardrailPassed=best.guardrailPassed===true||((summary.trades||0)>=Number(db.settings.minOptimizerTrades||60)&&(summary.expectancyR||0)>=Number(db.settings.minOptimizerExpectancyR||0.15)&&(summary.profitFactor||0)>=Number(db.settings.minOptimizerProfitFactor||1.25)&&(summary.maxDrawdownR||999)<=Number(db.settings.maxOptimizerDrawdownR||10));if(!guardrailPassed)return res.status(400).json({ok:false,error:"Optimizer guardrail blocked apply. Needs stronger sample size, expectancy, profit factor, and drawdown control."});const options=best.options;db.settings.minConfidence=Number(options.minConfidence||db.settings.minConfidence);db.settings.minRiskReward=Number(options.minRiskReward||db.settings.minRiskReward);db.settings.autoPaper=true;db.settings.startingCash=5000;addJournal(db,"OPTIMIZER_APPLIED","-","Optimizer best settings applied to scanner after strict guardrail check",db.settings);writeDb(db);res.json({ok:true,settings:db.settings,applied:options});});
+app.post("/api/optimizer/apply",(req,res)=>{const db=readDb();const latest=db.optimizerRuns[0];if(!latest||!latest.best||!latest.best.options)return res.status(400).json({ok:false,error:"No optimizer result available to apply."});const summary=latest.best.summary||{};if((summary.trades||0)<25||(summary.expectancyR||0)<=0)return res.status(400).json({ok:false,error:"Optimizer guardrail blocked apply. Sample size or expectancy is not strong enough."});const options=latest.best.options;db.settings.minConfidence=Number(options.minConfidence||db.settings.minConfidence);db.settings.minRiskReward=Number(options.minRiskReward||db.settings.minRiskReward);db.settings.autoPaper=true;db.settings.startingCash=5000;addJournal(db,"OPTIMIZER_APPLIED","-","Optimizer best settings applied to scanner after guardrail check",db.settings);writeDb(db);res.json({ok:true,settings:db.settings,applied:options});});
 
 // v5.3 walk-forward/training/report/replay endpoints
 app.post("/api/walkforward/run", async (req, res) => {
@@ -143,15 +143,21 @@ app.post("/api/broker/order",(req,res)=>res.status(403).json(placeOrder(req.body
   // Checks every minute if we need to pre-warm or run auto-paper
   setInterval(async () => {
     try {
-      const { getMarketSession } = require("./engines/marketHours");
-      const session = getMarketSession();
-      const et = new Date(new Date().toLocaleString("en-US", { timeZone: "America/New_York" }));
-      const mins = et.getHours() * 60 + et.getMinutes();
+      const { getMarketSession: _getMs } = require("./engines/marketHours");
+      const session = _getMs();
+      // Use Intl API for reliable timezone on Linux/Render (avoids toLocaleString bug)
+      const _now2 = new Date();
+      const _fmt2 = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", weekday: "short", hour12: false });
+      const _p2 = _fmt2.formatToParts(_now2);
+      const _h2 = parseInt(_p2.find(p => p.type === "hour")?.value || "0") % 24;
+      const _m2 = parseInt(_p2.find(p => p.type === "minute")?.value || "0");
+      const _wd = _p2.find(p => p.type === "weekday")?.value;
+      const mins = _h2 * 60 + _m2;
       const PRE_WARM_START = 9 * 60 + 30; // 9:30 AM ET — pre-warm at market open
       const PRE_WARM_END   = 10 * 60 + 35; // 10:35 AM ET — stop after window closes
 
       // Only run during the pre-warm + window period on weekdays
-      const day = et.getDay();
+      const day = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].indexOf(_wd);
       if (day === 0 || day === 6) return;
       if (mins < PRE_WARM_START || mins > PRE_WARM_END) return;
 
