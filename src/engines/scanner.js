@@ -820,6 +820,7 @@ function buildSignal(symbol, bars, spyMove21, marketBias, settings = {}, histori
     rrNumber,
     trend: trendBull ? "UP" : "NEUTRAL",
     regime: trendBull ? "Bullish" : "Neutral",
+    marketRegime: marketBias,
     action: safety === "TRADE_READY" ? "LONG" : safety === "WATCHLIST" ? "WATCH" : "IGNORE",
     safety,
     entry: round(price),
@@ -890,21 +891,24 @@ function scanMarket(barsBySymbol, settings = {}, historicalEdges = {}, liveQuote
       return b.confidence - a.confidence;
     })
     .map((s, i) => ({ rank: i + 1, ...s }));
-  const spySignal = signals.find(s => s.symbol === "SPY");
-  const qqqSignal = signals.find(s => s.symbol === "QQQ");
   const sectorLeader = findSectorLeader(signals.filter(s => s.trend === "UP"));
+  const spyTrend = finalRegime.spyScore >= 3 ? "BULLISH" : finalRegime.spyScore <= 1 ? "BEARISH" : "NEUTRAL";
+  const qqqTrend = finalRegime.qqqScore >= 3 ? "BULLISH" : finalRegime.qqqScore <= 1 ? "BEARISH" : "NEUTRAL";
 
   const market = {
     regime: finalRegime.regime,
-    spyTrend: spySignal?.trend === "UP" ? "BULLISH" : "NEUTRAL",
-    qqqTrend: qqqSignal?.trend === "UP" ? "BULLISH" : "NEUTRAL",
+    spyTrend,
+    qqqTrend,
     volatility: finalRegime.volatility,
     vix: round(vix),
     vixSource: Number.isFinite(rawVix) ? "LIVE" : "CALCULATED",
     breadth: `${finalRegime.breadth}%`,
     breadthScore: finalRegime.breadth,
+    spyScore: finalRegime.spyScore,
+    qqqScore: finalRegime.qqqScore,
+    indexScore: finalRegime.indexScore,
     sectorLeader,
-    confidence: Math.round((finalRegime.breadth + (spySignal?.confidence || 50)) / 2)
+    confidence: Math.round((finalRegime.breadth + Math.min(100, finalRegime.indexScore * 10)) / 2)
   };
 
   // Overlay live prices on signals for display (without affecting indicator calculations)

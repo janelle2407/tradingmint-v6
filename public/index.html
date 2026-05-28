@@ -1079,20 +1079,20 @@ function marketCountdown() {
     reason='US markets closed. Opens Monday 9:30 AM ET (11:30 PM AEST Sun).';
   } else if (mins >= OPEN_WIN_START && mins < OPEN_WIN_END) {
     state='🟢 OPENING WINDOW'; apAllowed=true; stateColor='var(--green)';
-    reason='✅ Entry window ACTIVE: 9:45–10:30 AM ET (12:45–12:30 AM AEST). First 15 mins skipped — now entering trades.';
+    reason='✅ Entry window ACTIVE: 9:45–10:30 AM ET. First 15 mins skipped — now entering trades.';
   } else if (mins >= MARKET_OPEN && mins < MARKET_CLOSE) {
     state='🔵 MARKET OPEN'; apAllowed=false; stateColor='var(--accent)';
     reason='Market open but past opening window. Auto-paper is OFF to avoid mid-day chasing.';
   } else if (mins >= MARKET_CLOSE) {
     state='🔴 AFTER HOURS'; apAllowed=false; stateColor='var(--red)';
-    reason='After hours. Next auto-paper window: tomorrow 9:15 AM ET (11:15 PM AEST).';
+    reason='After hours. Next auto-paper window: tomorrow 9:45 AM ET.';
   } else if (mins >= 4*60 && mins < OPEN_WIN_START) {
     const rem = OPEN_WIN_START - mins;
     state='🟡 PRE-MARKET'; apAllowed=false; stateColor='var(--yellow)';
     reason=`Pre-market. Auto-paper opens in ${Math.floor(rem/60)}h ${rem%60}m at 9:45 AM ET (12:45 AM AEST) — first 15 mins skipped.`;
   } else {
     state='🌙 OVERNIGHT'; apAllowed=false; stateColor='var(--muted)';
-    reason='Overnight. Auto-paper entry window: 9:15–10:00 AM ET (11:15–12:00 PM AEST).';
+    reason='Overnight. Auto-paper entry window: 9:45–10:30 AM ET.';
   }
 
   if (stateEl) { stateEl.textContent = state; stateEl.style.color = stateColor; }
@@ -1508,6 +1508,24 @@ function tradeDetailHTML(s) {
         <div><div style="font-family:var(--font-mono);font-size:16px">${s.historicalStats.winRate}%</div><div style="font-size:9px;color:var(--muted)">WIN RATE</div></div>
         <div><div style="font-family:var(--font-mono);font-size:16px;color:${s.historicalStats.expectancyR>0?'var(--green)':'var(--red)'}">${s.historicalStats.expectancyR}R</div><div style="font-size:9px;color:var(--muted)">EXPECTANCY</div></div>
         <div><div style="font-family:var(--font-mono);font-size:16px;color:${s.historicalStats.profitFactor>=1.5?'var(--green)':'var(--yellow)'}">${s.historicalStats.profitFactor}</div><div style="font-size:9px;color:var(--muted)">PROFIT FACTOR</div></div>
+      </div>
+    </div>`;
+  }
+
+
+  if (s.baseQuality || s.stage || s.fundamentals || s.catalyst) {
+    const baseLabel = s.baseQuality?.label || 'Not available';
+    const baseScore = s.baseQuality?.score ?? '--';
+    const stageLabel = s.stage?.stage || 'Not available';
+    const fundLabel = s.fundamentals?.active ? `${s.fundamentals.label} (${s.fundamentals.score}/100)` : 'Inactive - add data/fundamentals.json';
+    const catalystLabel = s.catalyst?.active ? `${s.catalyst.label} (${s.catalyst.score}/100)` : 'Inactive - add data/catalysts.json';
+    html += `<div style="background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:12px">
+      <div style="font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);margin-bottom:8px">Quality Filters</div>
+      <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:6px">
+        <div style="background:var(--surface3);border-radius:6px;padding:8px"><div style="font-size:9px;color:var(--muted);letter-spacing:1px;text-transform:uppercase">Base / VCP</div><div style="font-family:var(--font-mono);font-size:12px;color:${baseScore>=65?'var(--green)':baseScore>=45?'var(--yellow)':'var(--text2)'}">${baseLabel} · ${baseScore}/100</div></div>
+        <div style="background:var(--surface3);border-radius:6px;padding:8px"><div style="font-size:9px;color:var(--muted);letter-spacing:1px;text-transform:uppercase">Weinstein Stage</div><div style="font-family:var(--font-mono);font-size:12px;color:${stageLabel==='STAGE 2 UPTREND'?'var(--green)':stageLabel==='STAGE 4 DOWNTREND'?'var(--red)':'var(--yellow)'}">${stageLabel}</div></div>
+        <div style="background:var(--surface3);border-radius:6px;padding:8px"><div style="font-size:9px;color:var(--muted);letter-spacing:1px;text-transform:uppercase">CAN SLIM Fundamentals</div><div style="font-family:var(--font-mono);font-size:12px;color:${s.fundamentals?.active?'var(--accent)':'var(--muted)'}">${fundLabel}</div></div>
+        <div style="background:var(--surface3);border-radius:6px;padding:8px"><div style="font-size:9px;color:var(--muted);letter-spacing:1px;text-transform:uppercase">Earnings / News</div><div style="font-family:var(--font-mono);font-size:12px;color:${s.catalyst?.blocked?'var(--red)':s.catalyst?.active?'var(--accent)':'var(--muted)'}">${catalystLabel}</div></div>
       </div>
     </div>`;
   }

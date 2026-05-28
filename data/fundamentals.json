@@ -1,1 +1,112 @@
-{}
+{
+  "NVDA": {
+    "epsGrowthYoY": null,
+    "revenueGrowthYoY": null,
+    "epsAcceleration": null,
+    "salesAcceleration": null,
+    "returnOnEquity": null,
+    "grossMarginTrend": "UNKNOWN",
+    "institutionalOwnershipTrend": "UNKNOWN",
+    "analystEstimateRevisionTrend": "UNKNOWN",
+    "notes": "Manual placeholder. Connect a real data provider before relying on fundamentals."
+  },
+  "AAPL": {
+    "epsGrowthYoY": null,
+    "revenueGrowthYoY": null,
+    "epsAcceleration": null,
+    "salesAcceleration": null,
+    "returnOnEquity": null,
+    "grossMarginTrend": "UNKNOWN",
+    "institutionalOwnershipTrend": "UNKNOWN",
+    "analystEstimateRevisionTrend": "UNKNOWN",
+    "notes": "Manual placeholder. Connect a real data provider before relying on fundamentals."
+  },
+  "MSFT": {
+    "epsGrowthYoY": null,
+    "revenueGrowthYoY": null,
+    "epsAcceleration": null,
+    "salesAcceleration": null,
+    "returnOnEquity": null,
+    "grossMarginTrend": "UNKNOWN",
+    "institutionalOwnershipTrend": "UNKNOWN",
+    "analystEstimateRevisionTrend": "UNKNOWN",
+    "notes": "Manual placeholder. Connect a real data provider before relying on fundamentals."
+  },
+  "META": {
+    "epsGrowthYoY": null,
+    "revenueGrowthYoY": null,
+    "epsAcceleration": null,
+    "salesAcceleration": null,
+    "returnOnEquity": null,
+    "grossMarginTrend": "UNKNOWN",
+    "institutionalOwnershipTrend": "UNKNOWN",
+    "analystEstimateRevisionTrend": "UNKNOWN",
+    "notes": "Manual placeholder. Connect a real data provider before relying on fundamentals."
+  },
+  "AMZN": {
+    "epsGrowthYoY": null,
+    "revenueGrowthYoY": null,
+    "epsAcceleration": null,
+    "salesAcceleration": null,
+    "returnOnEquity": null,
+    "grossMarginTrend": "UNKNOWN",
+    "institutionalOwnershipTrend": "UNKNOWN",
+    "analystEstimateRevisionTrend": "UNKNOWN",
+    "notes": "Manual placeholder. Connect a real data provider before relying on fundamentals."
+  },
+  "GOOGL": {
+    "epsGrowthYoY": null,
+    "revenueGrowthYoY": null,
+    "epsAcceleration": null,
+    "salesAcceleration": null,
+    "returnOnEquity": null,
+    "grossMarginTrend": "UNKNOWN",
+    "institutionalOwnershipTrend": "UNKNOWN",
+    "analystEstimateRevisionTrend": "UNKNOWN",
+    "notes": "Manual placeholder. Connect a real data provider before relying on fundamentals."
+  },
+  "TSLA": {
+    "epsGrowthYoY": null,
+    "revenueGrowthYoY": null,
+    "epsAcceleration": null,
+    "salesAcceleration": null,
+    "returnOnEquity": null,
+    "grossMarginTrend": "UNKNOWN",
+    "institutionalOwnershipTrend": "UNKNOWN",
+    "analystEstimateRevisionTrend": "UNKNOWN",
+    "notes": "Manual placeholder. Connect a real data provider before relying on fundamentals."
+  },
+  "AMD": {
+    "epsGrowthYoY": null,
+    "revenueGrowthYoY": null,
+    "epsAcceleration": null,
+    "salesAcceleration": null,
+    "returnOnEquity": null,
+    "grossMarginTrend": "UNKNOWN",
+    "institutionalOwnershipTrend": "UNKNOWN",
+    "analystEstimateRevisionTrend": "UNKNOWN",
+    "notes": "Manual placeholder. Connect a real data provider before relying on fundamentals."
+  },
+  "AVGO": {
+    "epsGrowthYoY": null,
+    "revenueGrowthYoY": null,
+    "epsAcceleration": null,
+    "salesAcceleration": null,
+    "returnOnEquity": null,
+    "grossMarginTrend": "UNKNOWN",
+    "institutionalOwnershipTrend": "UNKNOWN",
+    "analystEstimateRevisionTrend": "UNKNOWN",
+    "notes": "Manual placeholder. Connect a real data provider before relying on fundamentals."
+  },
+  "PLTR": {
+    "epsGrowthYoY": null,
+    "revenueGrowthYoY": null,
+    "epsAcceleration": null,
+    "salesAcceleration": null,
+    "returnOnEquity": null,
+    "grossMarginTrend": "UNKNOWN",
+    "institutionalOwnershipTrend": "UNKNOWN",
+    "analystEstimateRevisionTrend": "UNKNOWN",
+    "notes": "Manual placeholder. Connect a real data provider before relying on fundamentals."
+  }
+}
