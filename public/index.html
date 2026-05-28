@@ -1215,17 +1215,26 @@ function redrawChart() {
   const volTop = pad.top + priceH + 8;
   const scaleVolY = v => volTop + volH - (v / maxVol) * volH;
 
-  // Grid lines
-  ctx.strokeStyle = 'rgba(255,255,255,0.03)';
+  // Horizontal grid lines — more visible
   ctx.lineWidth = 1;
   for (let i = 0; i <= 6; i++) {
     const y = pad.top + (i / 6) * priceH;
+    // Alternate stronger/lighter lines
+    ctx.strokeStyle = i === 0 || i === 6 ? 'rgba(255,255,255,0.10)' : 'rgba(255,255,255,0.05)';
     ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(W - pad.right, y); ctx.stroke();
     const price = maxP - (i / 6) * priceRange;
-    ctx.fillStyle = '#4a6070';
-    ctx.font = '9px DM Mono, monospace';
+    ctx.fillStyle = '#637c96';
+    ctx.font = '10px DM Mono, monospace';
     ctx.textAlign = 'right';
-    ctx.fillText('$' + price.toFixed(price > 100 ? 0 : 2), pad.left - 5, y + 3);
+    ctx.fillText('$' + price.toFixed(price > 100 ? 0 : 2), pad.left - 5, y + 4);
+  }
+
+  // Vertical grid lines — at date labels
+  const vStep = Math.max(1, Math.floor(recent.length / 6));
+  ctx.strokeStyle = 'rgba(255,255,255,0.04)';
+  for (let i = 0; i < recent.length; i += vStep) {
+    const x = scaleX(i);
+    ctx.beginPath(); ctx.moveTo(x, pad.top); ctx.lineTo(x, pad.top + priceH); ctx.stroke();
   }
 
   // EMA lines
@@ -1308,8 +1317,8 @@ function redrawChart() {
 
   // Date labels
   const step = Math.max(1, Math.floor(recent.length / 7));
-  ctx.fillStyle = '#4a6070';
-  ctx.font = '9px DM Mono, monospace';
+  ctx.fillStyle = '#8aacbf';
+  ctx.font = '10px DM Mono, monospace';
   ctx.textAlign = 'center';
   recent.forEach((bar, i) => {
     if (i % step === 0 || i === recent.length - 1) {
