@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>TradingMint PRO v6.4</title>
+<title>TradingMint PRO v6.5</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@700;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
@@ -420,7 +420,7 @@ label { font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: 
     <div class="logo-mark">M</div>
     <div class="logo-text">
       <div class="brand">TRADINGMINT</div>
-      <div class="sub">PRO v6.4 · Paper Only</div>
+      <div class="sub">PRO v6.5 · Paper Only</div>
     </div>
   </div>
 
@@ -967,6 +967,14 @@ function gradeTag(grade) {
   return `<span class="tag tag-red">${grade}</span>`;
 }
 
+function signalGradeTag(grade) {
+  if (grade === 'A+') return `<span class="tag" style="background:rgba(52,211,153,.25);color:#34d399;border:1px solid rgba(52,211,153,.5);font-size:11px;font-weight:800">A+ BEST</span>`;
+  if (grade === 'A')  return `<span class="tag tag-green" style="font-weight:700">A STRONG</span>`;
+  if (grade === 'B')  return `<span class="tag tag-blue"  style="font-weight:700">B VALID</span>`;
+  if (grade === 'C')  return `<span class="tag tag-yellow">C WATCH</span>`;
+  return `<span class="tag tag-red">D REJECT</span>`;
+}
+
 function showToast(msg, duration = 3000) {
   const t = document.getElementById('toast');
   t.textContent = msg;
@@ -1428,10 +1436,13 @@ function tradeDetailHTML(s) {
   };
   let html = `
     <div style="margin-bottom:12px">
-      <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;flex-wrap:wrap">
         <span style="font-family:var(--font-display);font-size:22px;font-weight:800">${s.symbol}</span>
         ${chip(s.safety)}
+        ${s.grade ? signalGradeTag(s.grade) : ''}
         ${gradeTag(s.historicalGrade)}
+        ${s.rs?.rsPercentile != null ? `<span class="tag tag-blue" style="font-size:10px">RS ${s.rs.rsPercentile}th %ile</span>` : ''}
+        ${s.rs?.rsLineNewHigh252 ? `<span class="tag tag-green" style="font-size:10px">52wk RS High ✓</span>` : s.rs?.rsLineNewHigh63 ? `<span class="tag tag-blue" style="font-size:10px">63d RS High ✓</span>` : ''}
       </div>
       <div style="font-size:12px;color:var(--text2)">${s.setup} — ${setupDescriptions[s.setup] || 'Standard setup.'}</div>
     </div>
@@ -1510,6 +1521,13 @@ function tradeDetailHTML(s) {
       <div class="reason-list">
         ${s.warnings.map(w => `<div class="reason-item negative"><span class="ri-dot"></span><span>${w}</span></div>`).join('')}
       </div>
+    </div>`;
+  }
+
+  if (s.rejectedReasons && s.rejectedReasons.length && s.safety !== 'TRADE_READY') {
+    html += `<div style="margin-top:10px;background:rgba(248,113,113,.06);border:1px solid rgba(248,113,113,.2);border-radius:6px;padding:10px">
+      <div style="font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--red);margin-bottom:6px">Why not TRADE_READY</div>
+      ${s.rejectedReasons.map(r => `<div style="font-size:11.5px;color:var(--text2);padding:3px 0;border-bottom:1px solid rgba(248,113,113,.1)">✗ ${r}</div>`).join('')}
     </div>`;
   }
 
@@ -1681,7 +1699,7 @@ function renderDashboard(d) {
         <td style="font-family:var(--font-mono)">${money(s.price)}</td>
         <td style="font-family:var(--font-mono);color:${clr(s.changePct)}">${pct(s.changePct)}</td>
         <td style="font-size:10px">${s.sectorEtf ? `<span style="color:${s.sectorBullish===true?'var(--green)':s.sectorBullish===false?'var(--red)':'var(--muted)'}">${s.sectorEtf} ${s.sectorBullish===true?'▲':s.sectorBullish===false?'▼':'?'}</span>` : '--'}</td>
-        <td>${chip(s.safety)}</td>
+        <td>${s.grade ? signalGradeTag(s.grade) : chip(s.safety)}</td>
         <td>
           ${s.safety === 'TRADE_READY' ? `<button class="btn btn-green" style="font-size:10px;padding:4px 8px" onclick="event.stopPropagation();enterPaper('${s.symbol}')">Paper Buy</button>` : ''}
         </td>

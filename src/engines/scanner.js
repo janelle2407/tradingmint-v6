@@ -246,28 +246,50 @@ function calcSpyVix(spyBars, period = 20) {
   return Math.max(8, Math.min(80, annualisedVol));
 }
 
-function marketRegimeFromSignals(signals, vix) {
-  const breadth = signals.length
-    ? Math.round((signals.filter(s => s.trend === "UP").length / signals.length) * 100)
-    : 0;
+function marketRegimeFromSignals(signals, vix, barsBySymbol = {}) {
+  const excluded = new Set(["SPY","QQQ","DIA","IWM"]);
+  const universe = signals.filter(s => !excluded.has(s.symbol));
+  const breadth = universe.length
+    ? Math.round((universe.filter(s => s.trend === "UP").length / universe.length) * 100)
+    : 50;
 
-  // VIX often fails to load from Yahoo — treat UNKNOWN as MEDIUM (not blocking)
-  let volatility = "MEDIUM"; // safe default when VIX unavailable
+  let volatility = "MEDIUM";
   if (Number.isFinite(vix)) {
     volatility = vix < 18 ? "LOW" : vix < 25 ? "MEDIUM" : vix < 30 ? "ELEVATED" : "HIGH";
   }
 
+  const vixPause = Number.isFinite(vix) && vix > 25;
+  const vixHalt  = Number.isFinite(vix) && vix > 30;
+
+  // SPY/QQQ structure — professional regime model using MA layers + slope
+  let spyScore = 0, qqqScore = 0;
+  for (const [etfSym, which] of [["SPY", 0], ["QQQ", 1]]) {
+    const etfBars = barsBySymbol[etfSym] || [];
+    if (etfBars.length >= 50) {
+      const ec = etfBars.map(b => b.close);
+      const price = ec.at(-1);
+      const e20 = ema(ec, 20), e50 = ema(ec, 50);
+      const s200 = ec.length >= 200 ? sma(ec, 200) : null;
+      let sc = 0;
+      if (e20 && price > e20) sc++;
+      if (e50 && price > e50) sc++;
+      if (s200 && price > s200) sc++;
+      if (e20 && e50 && e20 > e50) sc++; // short-term > medium-term
+      if (ec.length >= 55) {
+        const e50prev = ema(ec.slice(0, -5), 50);
+        if (e50 && e50prev && e50 > e50prev) sc++; // 50-day slope rising
+      }
+      if (which === 0) spyScore = sc; else qqqScore = sc;
+    }
+  }
+  const indexScore = spyScore + qqqScore; // max 10
+
   let regime = "NEUTRAL";
-  // VIX spike filter — professional rule: step aside when fear is high
-  // VIX >25 = caution (reduce size), VIX >30 = no new longs at all
-  const vixPause  = vix && vix > 25;
-  const vixHalt   = vix && vix > 30;
+  if (breadth >= 55 && indexScore >= 6 && !vixPause) regime = "BULLISH";
+  else if (breadth >= 45 && indexScore >= 4 && !vixPause) regime = "NEUTRAL";
+  if (breadth < 35 || indexScore <= 2 || vixHalt) regime = "BEARISH";
 
-  if (breadth >= 55 && volatility !== "HIGH" && !vixPause) regime = "BULLISH";
-  if (breadth < 35 || volatility === "HIGH" || vixHalt) regime = "BEARISH";
-  if (vixPause && !vixHalt && regime === "NEUTRAL") regime = "NEUTRAL"; // keep neutral, not bullish
-
-  return { regime, breadth, volatility, vixPause, vixHalt };
+  return { regime, breadth, volatility, vixPause, vixHalt, spyScore, qqqScore, indexScore };
 }
 
 // ─── Sector ETF Momentum Check ────────────────────────────────────────────────
@@ -305,6 +327,53 @@ function getSectorEtfScore(symbol, barsBySymbol) {
   return { score, bullish, etf, reasons, price: round(price), ema20: round(ema20v) };
 }
 
+// ─── Relative Strength Engine ─────────────────────────────────────────────────
+// Calculates RS vs SPY over multiple timeframes — the way professional traders do it
+// Higher RS = stock is outperforming the market = higher quality setup
+
+function calcRelativeStrength(closes, spyCloses) {
+  const rs = {};
+  const periods = { rs1m: 21, rs3m: 63, rs6m: 126, rs12m: 252 };
+  for (const [key, period] of Object.entries(periods)) {
+    if (closes.length > period && spyCloses.length > period) {
+      const stockMove = (closes.at(-1) - closes.at(-period - 1)) / closes.at(-period - 1) * 100;
+      const spyMove   = (spyCloses.at(-1) - spyCloses.at(-period - 1)) / spyCloses.at(-period - 1) * 100;
+      rs[key] = round(stockMove - spyMove, 2);
+    } else {
+      rs[key] = null;
+    }
+  }
+
+  // RS acceleration: is 1M RS improving vs 3M RS?
+  rs.rsAccelerating = rs.rs1m != null && rs.rs3m != null && rs.rs1m > rs.rs3m;
+
+  // RS line new high: is current RS better than 63-day RS high?
+  if (closes.length >= 64 && spyCloses.length >= 64) {
+    const rsLine = closes.map((c, i) => {
+      const sc = spyCloses[i];
+      return sc && sc > 0 ? c / sc : null;
+    }).filter(v => v != null);
+    const rsHigh63 = rsLine.length >= 63 ? Math.max(...rsLine.slice(-63)) : null;
+    const rsHigh252 = rsLine.length >= 252 ? Math.max(...rsLine.slice(-252)) : null;
+    rs.rsLineNewHigh63  = rsHigh63  ? rsLine.at(-1) >= rsHigh63  * 0.995 : false;
+    rs.rsLineNewHigh252 = rsHigh252 ? rsLine.at(-1) >= rsHigh252 * 0.995 : false;
+  }
+
+  return rs;
+}
+
+// Calculate RS percentile rank across all signals (call after building all signals)
+function addRsPercentiles(signals) {
+  const rs3mValues = signals.map(s => s.rs?.rs3m).filter(v => v != null).sort((a, b) => a - b);
+  for (const s of signals) {
+    if (s.rs?.rs3m != null && rs3mValues.length > 0) {
+      const rank = rs3mValues.filter(v => v <= s.rs.rs3m).length;
+      s.rs.rsPercentile = Math.round((rank / rs3mValues.length) * 100);
+    }
+  }
+  return signals;
+}
+
 // ─── Main Signal Builder ───────────────────────────────────────────────────
 
 function buildSignal(symbol, bars, spyMove21, marketBias, settings = {}, historicalEdges = {}, barsBySymbol = {}) {
@@ -337,6 +406,10 @@ function buildSignal(symbol, bars, spyMove21, marketBias, settings = {}, histori
   const trendBull = price > ema20 && price > ema50 && (!sma200 || price > sma200);
   const setup = classifySetup(price, high20, low20, ema20, ema50, sma200, rsi14, macdData, adxVal, bb);
 
+  // ── Relative Strength vs SPY ──
+  const spyClosesForRs = (barsBySymbol.SPY || []).map(b => b.close);
+  const rs = calcRelativeStrength(closes, spyClosesForRs);
+
   // ── Sector ETF Check ──
   const sectorCheck = getSectorEtfScore(symbol, barsBySymbol);
 
@@ -367,10 +440,17 @@ function buildSignal(symbol, bars, spyMove21, marketBias, settings = {}, histori
   else if (adxVal && adxVal > 18) { technicalScore += 4; }
   else if (adxVal) warnings.push("Trend strength is weak — this could be a choppy, sideways move.");
 
-  // Relative strength
-  if (relativeStrength > 2) { technicalScore += 10; reasons.push("This stock is outperforming the S&P 500 recently."); }
-  else if (relativeStrength > 0) { technicalScore += 5; reasons.push("This stock is keeping up with the S&P 500."); }
-  else warnings.push("This stock is underperforming the S&P 500 recently.");
+  // Relative strength — multi-timeframe (professional standard)
+  if (rs.rs3m != null && rs.rs3m > 10) { technicalScore += 12; reasons.push(`RS 3-month: +${rs.rs3m}% vs S&P 500 — strong leader.`); }
+  else if (rs.rs3m != null && rs.rs3m > 3)  { technicalScore += 7;  reasons.push(`RS 3-month: +${rs.rs3m}% vs S&P 500 — outperforming.`); }
+  else if (rs.rs3m != null && rs.rs3m > 0)  { technicalScore += 3; }
+  else if (rs.rs3m != null)                 { technicalScore -= 6;  warnings.push(`RS 3-month: ${rs.rs3m}% vs S&P 500 — underperforming.`); }
+
+  if (rs.rs1m != null && rs.rs1m > 5)  { technicalScore += 5; reasons.push(`RS 1-month: +${rs.rs1m}% — recent momentum.`); }
+  if (rs.rsAccelerating)               { technicalScore += 5; reasons.push("RS accelerating — short-term strength improving vs long-term."); }
+  if (rs.rsLineNewHigh63)              { technicalScore += 6; reasons.push("RS line at 63-day high — stock is a relative strength leader."); }
+  if (rs.rsLineNewHigh252)             { technicalScore += 8; reasons.push("RS line at 52-week high — this is a true market leader."); }
+  if (rs.rs6m != null && rs.rs6m < -10) warnings.push(`RS 6-month: ${rs.rs6m}% — weak on longer timeframe.`);
 
   // RSI
   if (rsi14 >= 50 && rsi14 <= 68) { technicalScore += 8; reasons.push(`RSI (${round(rsi14)}) is in a healthy bullish zone — not overbought.`); }
@@ -525,9 +605,43 @@ function buildSignal(symbol, bars, spyMove21, marketBias, settings = {}, histori
   ) safety = "TRADE_READY";
   else if (confidence >= 62) safety = "WATCHLIST";
 
+  // ── Signal Grade (A+ to D) ──
+  // Professional quality label based on all filters combined
+  let grade = "D";
+  const rsScore = rs.rs3m != null ? rs.rs3m : 0;
+  const hasEdge = edge.passed;
+  const sectorGood = sectorCheck.bullish !== false;
+  const weeklyGood = bars.length >= 6 && (bars.at(-1).close > (bars.at(-6)?.close || 0));
+
+  if (safety === "TRADE_READY" && confidence >= 88 && rsScore > 10 && hasEdge && rs.rsLineNewHigh63 && sectorGood) {
+    grade = "A+"; // Best possible: everything aligned
+  } else if (safety === "TRADE_READY" && confidence >= 82 && rsScore > 3 && hasEdge && sectorGood) {
+    grade = "A";  // Strong valid setup
+  } else if (safety === "TRADE_READY" && confidence >= 76) {
+    grade = "B";  // Valid but missing one ingredient
+  } else if (safety === "WATCHLIST" && confidence >= 68) {
+    grade = "C";  // Watch only
+  } else {
+    grade = "D";  // Reject
+  }
+
+  // Why rejected summary — helps user understand what's missing
+  const rejectedReasons = [];
+  if (marketBias !== "BULLISH") rejectedReasons.push("Market regime not fully bullish");
+  if (!edge.passed) rejectedReasons.push("Historical edge not proven (need 20+ trades)");
+  if (sectorCheck.bullish === false) rejectedReasons.push(`Sector (${sectorCheck.etf}) is weak`);
+  if (rs.rs3m != null && rs.rs3m < 0) rejectedReasons.push("Relative strength below S&P 500");
+  if (volumeRatio && volumeRatio < 1.0) rejectedReasons.push("Volume not confirming");
+  if (stretched) rejectedReasons.push("Price looks extended");
+  if (rrNumber < settings.minRiskReward) rejectedReasons.push(`R/R ${rrNumber} below minimum ${settings.minRiskReward}`);
+  if (!trendBull) rejectedReasons.push("Not all trend filters bullish");
+  if (adxVal && adxVal < 20) rejectedReasons.push("Trend too weak (ADX < 20)");
+
   return {
     symbol,
     price: round(price),
+    grade,
+    rejectedReasons,
     changePct: round(move1, 2),
     setup,
     weeklyTrend: bars.length >= 6 ? round(((bars.at(-1).close - (bars.at(-6)?.close || bars.at(-1).close)) / (bars.at(-6)?.close || bars.at(-1).close)) * 100, 1) : null,
@@ -557,6 +671,7 @@ function buildSignal(symbol, bars, spyMove21, marketBias, settings = {}, histori
     macd: macdData,
     bb: bb ? { upper: round(bb.upper), middle: round(bb.middle), lower: round(bb.lower), pctB: bb.pctB } : null,
     relativeStrength: round(relativeStrength, 2),
+    rs,
     volumeRatio: round(volumeRatio, 2),
     sectorEtf: sectorCheck.etf,
     sectorBullish: sectorCheck.bullish,
@@ -586,7 +701,7 @@ function scanMarket(barsBySymbol, settings = {}, historicalEdges = {}, liveQuote
   // Yahoo Finance blocks ^VIX from server IPs, so we calculate it from SPY returns
   const rawVix = (barsBySymbol['^VIX'] || barsBySymbol['VIX'])?.at(-1)?.close;
   const vix = Number.isFinite(rawVix) ? rawVix : calcSpyVix(spyBars);
-  const preRegime = marketRegimeFromSignals(preliminary, vix);
+  const preRegime = marketRegimeFromSignals(preliminary, vix, barsBySymbol);
 
   // Second pass with known regime
   const signals = Object.keys(barsBySymbol)
@@ -595,7 +710,10 @@ function scanMarket(barsBySymbol, settings = {}, historicalEdges = {}, liveQuote
     .sort((a, b) => b.confidence - a.confidence)
     .map((s, i) => ({ rank: i + 1, ...s }));
 
-  const finalRegime = marketRegimeFromSignals(signals, vix);
+  // Add RS percentile across the full universe
+  addRsPercentiles(signals);
+
+  const finalRegime = marketRegimeFromSignals(signals, vix, barsBySymbol);
   const spySignal = signals.find(s => s.symbol === "SPY");
   const qqqSignal = signals.find(s => s.symbol === "QQQ");
   const sectorLeader = findSectorLeader(signals.filter(s => s.trend === "UP"));
