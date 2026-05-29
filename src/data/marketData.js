@@ -27,19 +27,60 @@ async function yahooBarsRaw(symbol, range = "max", interval = "1d") {
   const clean = String(symbol || "").trim().toUpperCase();
   const key = `${clean}:${range}:${interval}`;
   const cached = cache.get(key);
-  if (cached && Date.now() - cached.time < 180000) return cached;
+  if (cached && Date.now() - cached.time < 86400000) return cached; // 24hr cache — historical data doesn't change
 
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(clean)}?range=${encodeURIComponent(range)}&interval=${encodeURIComponent(interval)}&includePrePost=false`;
+  // Try query1 first, fall back to query2 if blocked
+  const urls = [
+    `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(clean)}?range=${encodeURIComponent(range)}&interval=${encodeURIComponent(interval)}&includePrePost=false`,
+    `https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(clean)}?range=${encodeURIComponent(range)}&interval=${encodeURIComponent(interval)}&includePrePost=false`,
+  ];
+  const url = urls[0]; // primary
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 12000);
 
   try {
     const response = await fetch(url, {
       signal: controller.signal,
-      headers: { "User-Agent": "Mozilla/5.0", "Accept": "application/json" }
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Origin": "https://finance.yahoo.com",
+        "Referer": "https://finance.yahoo.com/"
+      }
     });
 
-    if (!response.ok) throw new Error(`${clean} HTTP ${response.status}`);
+    if (!response.ok) {
+      // Try query2 if query1 is blocked
+      if (response.status === 403 || response.status === 429) {
+        const url2 = urls[1];
+        const res2 = await fetch(url2, {
+          signal: controller.signal,
+          headers: {
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "application/json, text/plain, */*",
+            "Origin": "https://finance.yahoo.com",
+            "Referer": "https://finance.yahoo.com/"
+          }
+        });
+        if (!res2.ok) throw new Error(`${clean} HTTP ${response.status} (both endpoints blocked)`);
+        const payload2 = await res2.json();
+        const result2 = payload2?.chart?.result?.[0];
+        const quote2 = result2?.indicators?.quote?.[0];
+        if (!result2?.timestamp || !quote2) throw new Error(`${clean} missing data`);
+        const bars2 = result2.timestamp.map((ts, idx) => ({
+          date: new Date(ts * 1000).toISOString().slice(0, 10),
+          open: Number(quote2.open?.[idx]), high: Number(quote2.high?.[idx]),
+          low: Number(quote2.low?.[idx]), close: Number(quote2.close?.[idx]),
+          volume: Number(quote2.volume?.[idx] || 0)
+        })).filter(b => Number.isFinite(b.open) && Number.isFinite(b.close) && b.close > 0);
+        if (bars2.length < 200) throw new Error(`${clean} only ${bars2.length} bars from query2`);
+        const out2 = { bars: bars2, usedRange: range, interval, firstDate: bars2[0]?.date, lastDate: bars2.at(-1)?.date, barCount: bars2.length };
+        cache.set(key, { time: Date.now(), ...out2 });
+        return out2;
+      }
+      throw new Error(`${clean} HTTP ${response.status}`);
+    }
     const payload = await response.json();
     const result = payload?.chart?.result?.[0];
     const quote = result?.indicators?.quote?.[0];
@@ -167,7 +208,13 @@ async function fetchEarningsDate(symbol) {
     try {
       const res = await fetch(url, {
         signal: controller.signal,
-        headers: { "User-Agent": "Mozilla/5.0", "Accept": "application/json" }
+        headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Origin": "https://finance.yahoo.com",
+        "Referer": "https://finance.yahoo.com/"
+      }
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
