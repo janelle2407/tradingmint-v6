@@ -763,7 +763,28 @@ function buildSignal(symbol, bars, spyMove21, marketBias, settings = {}, histori
   const bb = bollingerBands(closes, 20, 2);
 
   const avgVol = sma(volumes, 20);
-  const volumeRatio = avgVol && avgVol > 0 ? last.volume / avgVol : null;
+  // Time-adjusted volume ratio — accounts for partial trading day
+  // At 11:40 AM ET we're ~33% through the session, so today's volume
+  // should be compared against 33% of the average full-day volume
+  let volumeRatio = avgVol && avgVol > 0 ? last.volume / avgVol : null;
+  if (volumeRatio != null) {
+    try {
+      const fmt = new Intl.DateTimeFormat("en-US", {
+        timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", hour12: false
+      });
+      const parts = fmt.formatToParts(new Date());
+      const etH = parseInt(parts.find(p => p.type === "hour")?.value || "15") % 24;
+      const etM = parseInt(parts.find(p => p.type === "minute")?.value || "30");
+      const minsIntoSession = Math.max(1, (etH * 60 + etM) - (9 * 60 + 30));
+      const sessionLength = 390; // 9:30 AM to 4:00 PM = 390 mins
+      const dayPctDone = Math.min(1, minsIntoSession / sessionLength);
+      // Only adjust if market is open and less than 80% through the day
+      if (dayPctDone > 0.05 && dayPctDone < 0.8) {
+        const expectedVolSoFar = avgVol * dayPctDone;
+        volumeRatio = last.volume / expectedVolSoFar;
+      }
+    } catch {}
+  }
 
   const move1 = percentMove(price, prev.close);
   const move21 = closes.length > 22 ? percentMove(closes[closes.length - 1], closes[closes.length - 22]) : 0;
