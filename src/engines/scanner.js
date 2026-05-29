@@ -164,6 +164,41 @@ function bollingerBands(closes, period = 20, stdDev = 2) {
   };
 }
 
+// ─── VWAP Calculation ────────────────────────────────────────────────────────
+// VWAP = Volume Weighted Average Price — most reliable intraday anchor
+// We calculate it from daily bars as a 20-day VWAP approximation
+// Rule: only long if price is above VWAP
+
+function calcVWAP(bars, period = 20) {
+  if (!Array.isArray(bars) || bars.length < period) return null;
+  const slice = bars.slice(-period);
+  let totalPV = 0, totalVol = 0;
+  for (const bar of slice) {
+    const typical = (bar.high + bar.low + bar.close) / 3;
+    const vol = Number(bar.volume || 0);
+    totalPV += typical * vol;
+    totalVol += vol;
+  }
+  return totalVol > 0 ? totalPV / totalVol : null;
+}
+
+// ─── Candle Quality Check ─────────────────────────────────────────────────────
+// Rule 5: candle body must be > 50% of candle range (no wick-dominated candles)
+// Weak candles = indecision = unreliable breakout
+
+function candleQuality(bar) {
+  if (!bar) return { strong: false, bodyPct: 0 };
+  const range = bar.high - bar.low;
+  if (range <= 0) return { strong: false, bodyPct: 0 };
+  const body = Math.abs(bar.close - bar.open);
+  const bodyPct = (body / range) * 100;
+  return {
+    strong: bodyPct >= 50,          // body fills at least half the candle
+    bodyPct: round(bodyPct, 1),
+    bullish: bar.close > bar.open   // green candle
+  };
+}
+
 // ─── Setup Classification ──────────────────────────────────────────────────
 
 function classifySetup(price, high20, low20, ema20, ema50, sma200, rsi14, macdData, adxVal, bb) {
@@ -425,9 +460,10 @@ function setupVolumeScore(setup, bars, volumeRatio, baseQuality = null) {
   const priorVol20 = avgVolume(bars.slice(-40, -20));
   const dryUp = priorVol20 && vol10 ? ((priorVol20 - vol10) / priorVol20) * 100 : 0;
   if (setup === "Breakout") {
-    if (volumeRatio >= 1.8) { score += 14; reasons.push(`Breakout volume very strong at ${volumeRatio.toFixed(1)}x average.`); }
-    else if (volumeRatio >= 1.4) { score += 10; reasons.push(`Breakout volume confirms at ${volumeRatio.toFixed(1)}x average.`); }
-    else { score -= 8; warnings.push("Breakout volume weak. Strong breakouts need clear volume expansion."); }
+    if (volumeRatio >= 2.0) { score += 16; reasons.push(`Breakout volume excellent at ${volumeRatio.toFixed(1)}x average — real buyer conviction.`); }
+    else if (volumeRatio >= 1.5) { score += 10; reasons.push(`Breakout volume confirms at ${volumeRatio.toFixed(1)}x average.`); }
+    else if (volumeRatio >= 1.2) { score -= 4;  warnings.push(`Breakout volume only ${volumeRatio.toFixed(1)}x — needs at least 1.5x to confirm. Risk of false breakout.`); }
+    else { score -= 14; warnings.push("Breakout volume weak. Real breakouts need 1.5x+ volume. High risk of failure."); }
   } else if (setup === "EMA Bounce") {
     if (lastGreen && prev && last.volume > prev.volume) { score += 8; reasons.push("Bounce volume improving from prior day."); }
     if (volumeRatio < 0.8) warnings.push("Bounce volume quiet — confirmation still light.");
@@ -525,6 +561,14 @@ function buildSignal(symbol, bars, spyMove21, marketBias, settings = {}, histori
 
   const trendBull = price > ema20 && price > ema50 && (!sma200 || price > sma200);
   const setup = classifySetup(price, high20, low20, ema20, ema50, sma200, rsi14, macdData, adxVal, bb);
+
+  // ── VWAP ──
+  const vwap = calcVWAP(bars, 20);
+  const aboveVwap = vwap ? price > vwap : null;
+  const vwapDist = vwap ? round(((price - vwap) / vwap) * 100, 2) : null;
+
+  // ── Candle Quality ──
+  const candle = candleQuality(last);
 
   // ── Base Quality / VCP ──
   const baseQuality = detectBaseQuality(bars);
@@ -658,8 +702,29 @@ function buildSignal(symbol, bars, spyMove21, marketBias, settings = {}, histori
   // Min share price filter ($10+) — penny stocks have unreliable technicals
   if (price < 10) { technicalScore -= 30; warnings.push("Price below $10 — penny stock territory. Technicals unreliable."); }
 
-  // Min average daily volume (500k+) — need liquidity to exit cleanly
-  if (avgVol && avgVol < 500000) { technicalScore -= 20; warnings.push(`Low avg volume (${Math.round(avgVol/1000)}k/day) — hard to exit cleanly. Top traders require 500k+ daily volume.`); }
+  // Min average daily volume (1M+) — professional standard for clean fills
+  if (avgVol && avgVol < 1000000) {
+    technicalScore -= 20;
+    warnings.push(`Low avg volume (${Math.round(avgVol/1000)}k/day) — hard to exit cleanly. Top traders require 1M+ daily volume.`);
+  }
+
+  // VWAP filter — only long if price is above VWAP (most reliable intraday anchor)
+  if (aboveVwap === true) {
+    technicalScore += 8;
+    reasons.push(`Price is above VWAP ($${vwap?.toFixed(2)}) — buyers in control.`);
+  } else if (aboveVwap === false) {
+    technicalScore -= 10;
+    warnings.push(`Price is below VWAP ($${vwap?.toFixed(2)}) — sellers in control. Wait for price to reclaim VWAP before entering.`);
+  }
+
+  // Candle quality — weak wicks mean indecision
+  if (!candle.strong && (setup === "Breakout" || setup === "Squeeze Breakout")) {
+    technicalScore -= 8;
+    warnings.push(`Last candle body is only ${candle.bodyPct}% of range — wick-dominated candle suggests indecision on breakout.`);
+  } else if (candle.strong && candle.bullish) {
+    technicalScore += 4;
+    reasons.push(`Strong candle body (${candle.bodyPct}% of range) — conviction behind the move.`);
+  }
 
   technicalScore = Math.max(1, Math.min(99, Math.round(technicalScore)));
 
@@ -718,6 +783,56 @@ function buildSignal(symbol, bars, spyMove21, marketBias, settings = {}, histori
   const techW = 1 - edgeW;
   const confidence = Math.max(1, Math.min(99, Math.round(technicalScore * techW + edge.score * edgeW)));
 
+  // ── Multi-Factor Confirmation Count ──
+  // Rule: need at least 3 independent categories confirming the same direction
+  // This removes 70% of false signals
+  let confirmedCategories = 0;
+  const confirmationDetails = [];
+
+  // Category 1: Trend (EMA alignment)
+  if (price > ema20 && ema20 > ema50) {
+    confirmedCategories++;
+    confirmationDetails.push("Trend ✓");
+  }
+
+  // Category 2: Momentum (MACD + ADX)
+  if (macdData?.bullish && adxVal && adxVal > 20) {
+    confirmedCategories++;
+    confirmationDetails.push("Momentum ✓");
+  }
+
+  // Category 3: Volume confirmation
+  if (volumeRatio && volumeRatio >= 1.3) {
+    confirmedCategories++;
+    confirmationDetails.push("Volume ✓");
+  }
+
+  // Category 4: Price action (clean setup near key level)
+  if (setup === "Breakout" || setup === "EMA Bounce" || setup === "Squeeze Breakout") {
+    confirmedCategories++;
+    confirmationDetails.push("Price Action ✓");
+  }
+
+  // Category 5: Market context (SPY/QQQ + sector)
+  if (marketBias !== "BEARISH" && sectorCheck.bullish !== false) {
+    confirmedCategories++;
+    confirmationDetails.push("Market Context ✓");
+  }
+
+  // Category 6: VWAP
+  if (aboveVwap === true) {
+    confirmedCategories++;
+    confirmationDetails.push("VWAP ✓");
+  }
+
+  const multiFactorOk = confirmedCategories >= 3;
+  if (!multiFactorOk) {
+    warnings.push(`Only ${confirmedCategories}/6 confirmation categories align (need 3+): ${confirmationDetails.join(", ") || "none"}.`);
+    technicalScore -= 10;
+  } else {
+    reasons.push(`${confirmedCategories}/6 confirmation categories align: ${confirmationDetails.join(", ")}.`);
+  }
+
   // ── Safety Decision ──
   let safety = "REJECT";
 
@@ -739,7 +854,8 @@ function buildSignal(symbol, bars, spyMove21, marketBias, settings = {}, histori
     !stretched &&
     edge.passed &&
     trendStrong &&
-    sectorOk
+    sectorOk &&
+    multiFactorOk
   ) safety = "TRADE_READY";
   else if (confidence >= 62) safety = "WATCHLIST";
 
@@ -758,6 +874,9 @@ function buildSignal(symbol, bars, spyMove21, marketBias, settings = {}, histori
   if (rrNumber < settings.minRiskReward) rejectedReasons.push(`R/R ${rrNumber} below minimum ${settings.minRiskReward}`);
   if (!trendBull) rejectedReasons.push("Not all trend filters bullish");
   if (adxVal && adxVal < 20) rejectedReasons.push("Trend too weak (ADX < 20)");
+  if (!multiFactorOk) rejectedReasons.push(`Only ${confirmedCategories}/6 confirmation factors align (need 3+)`);
+  if (aboveVwap === false) rejectedReasons.push("Price below VWAP — sellers in control");
+  if (!candle.strong && setup === "Breakout") rejectedReasons.push("Weak candle body on breakout — indecision");
 
   return {
     symbol,
@@ -794,6 +913,13 @@ function buildSignal(symbol, bars, spyMove21, marketBias, settings = {}, histori
     bb: bb ? { upper: round(bb.upper), middle: round(bb.middle), lower: round(bb.lower), pctB: bb.pctB } : null,
     relativeStrength: round(relativeStrength, 2),
     rs,
+    vwap: vwap ? round(vwap) : null,
+    aboveVwap,
+    vwapDist,
+    candleBodyPct: candle.bodyPct,
+    candleStrong: candle.strong,
+    confirmedCategories,
+    confirmationDetails,
     volumeRatio: round(volumeRatio, 2),
     sectorEtf: sectorCheck.etf,
     sectorBullish: sectorCheck.bullish,

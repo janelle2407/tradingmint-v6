@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>TradingMint PRO v6.6</title>
+<title>TradingMint PRO v6.7</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@700;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
@@ -420,7 +420,7 @@ label { font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: 
     <div class="logo-mark">M</div>
     <div class="logo-text">
       <div class="brand">TRADINGMINT</div>
-      <div class="sub">PRO v6.6 · Paper Only</div>
+      <div class="sub">PRO v6.7 · Paper Only</div>
     </div>
   </div>
 
@@ -1481,6 +1481,9 @@ function tradeDetailHTML(s) {
     ${metricRow('vs S&P 500', `<span style="color:${s.relativeStrength>=0?'var(--green)':'var(--red)'}">${pct(s.relativeStrength)}</span>`, 'How this stock is performing compared to SPY')}
     ${metricRow('Weekly Trend', `<span style="color:${s.weeklyTrend>1?'var(--green)':s.weeklyTrend<-1?'var(--red)':'var(--muted)'}">${s.weeklyTrend!=null?(s.weeklyTrend>0?'+':'')+s.weeklyTrend+'%':'--'}</span>`, 'Price change over last 5 trading days')}
     ${metricRow('SPY Today', `<span style="color:${s.spyDayMove>0.3?'var(--green)':s.spyDayMove<-0.5?'var(--red)':'var(--muted)'}">${s.spyDayMove!=null?(s.spyDayMove>0?'+':'')+s.spyDayMove+'%':'--'}</span>`, "S&P 500 move today — don't fight the market")}
+    ${s.vwap != null ? metricRow('VWAP', `<span style="color:${s.aboveVwap?'var(--green)':'var(--red)'}">${s.aboveVwap?'Above':'Below'} VWAP ($${s.vwap}) · ${s.vwapDist>0?'+':''}${s.vwapDist}%</span>`, 'Price above VWAP = buyers in control. Below = sellers in control.') : ''}
+    ${s.candleBodyPct != null ? metricRow('Candle Quality', `<span style="color:${s.candleStrong?'var(--green)':'var(--yellow)'}">${s.candleBodyPct}% body ${s.candleStrong?'✓ Strong':'⚠ Weak'}</span>`, 'Body > 50% of range = conviction. Wick-heavy candle = indecision.') : ''}
+    ${s.confirmedCategories != null ? metricRow('Confirmations', `<span style="color:${s.confirmedCategories>=3?'var(--green)':s.confirmedCategories>=2?'var(--yellow)':'var(--red)'}">${s.confirmedCategories}/6 factors align</span>`, 'Need 3+ independent categories confirming the same direction.') : ''}
     ${s.rs?.rs1m != null ? metricRow('RS 1 Month', `<span style="color:${s.rs.rs1m>3?'var(--green)':s.rs.rs1m<0?'var(--red)':'var(--muted)'}">${s.rs.rs1m>0?'+':''}${s.rs.rs1m}% vs SPY</span>`, '1-month return vs S&P 500') : ''}
     ${s.rs?.rs3m != null ? metricRow('RS 3 Month', `<span style="color:${s.rs.rs3m>5?'var(--green)':s.rs.rs3m<0?'var(--red)':'var(--muted)'}">${s.rs.rs3m>0?'+':''}${s.rs.rs3m}% vs SPY</span>`, '3-month return vs S&P 500') : ''}
     ${s.rs?.rs6m != null ? metricRow('RS 6 Month', `<span style="color:${s.rs.rs6m>5?'var(--green)':s.rs.rs6m<0?'var(--red)':'var(--muted)'}">${s.rs.rs6m>0?'+':''}${s.rs.rs6m}% vs SPY</span>`, '6-month return vs S&P 500') : ''}

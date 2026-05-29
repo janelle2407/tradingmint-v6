@@ -94,10 +94,16 @@ function getMarketSession() {
   }
 
   if (totalMins >= OPEN_WINDOW_END && totalMins < CLOSE_BUFFER) {
+    // Lunch hour filter: 11:30 AM – 1:30 PM ET — unreliable, low volume
+    const isLunch = totalMins >= 11 * 60 + 30 && totalMins < 13 * 60 + 30;
     return {
-      session: "MARKET_OPEN", isMarketOpen: true, isOpeningWindow: false,
+      session: isLunch ? "LUNCH_HOURS" : "MARKET_OPEN",
+      isMarketOpen: true, isOpeningWindow: false,
       autoPaperAllowed: false,
-      reason: "Market open — past entry window. Auto-paper OFF. Existing positions still monitored.",
+      isLunchHours: isLunch,
+      reason: isLunch
+        ? "Lunch hours (11:30–1:30 ET) — low volume, unreliable signals. Auto-paper stays OFF."
+        : "Market open — past entry window. Auto-paper OFF. Existing positions still monitored.",
       etTime, nextEvent: "Market closes at 4:00 PM ET (6:00 AM AEST)",
       aestNote: aestMarket
     };
