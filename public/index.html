@@ -1452,6 +1452,12 @@ function tradeDetailHTML(s) {
         ${s.rs?.rsPercentile != null ? `<span class="tag tag-blue" style="font-size:10px">RS ${s.rs.rsPercentile}th %ile</span>` : ''}
         ${s.rs?.rsLineNewHigh252 ? `<span class="tag tag-green" style="font-size:10px">52wk RS High ✓</span>` : s.rs?.rsLineNewHigh63 ? `<span class="tag tag-blue" style="font-size:10px">63d RS High ✓</span>` : ''}
       </div>
+      ${s.safety === 'TRADE_READY' && currentSession && !currentSession.autoPaperAllowed ? `
+      <div style="background:rgba(251,191,36,.08);border:1px solid rgba(251,191,36,.3);border-radius:6px;padding:8px 12px;margin-bottom:10px;font-size:12px">
+        <span style="color:var(--yellow);font-weight:600">⚡ Signal is ready but auto-paper is paused</span>
+        <span style="color:var(--text2)"> — ${currentSession.reason}</span>
+        <br><span style="color:var(--muted);font-size:11px">You can enter this trade manually right now using the Paper Buy button below.</span>
+      </div>` : ''}
       <div style="font-size:12px;color:var(--text2)">${s.setup} — ${setupDescriptions[s.setup] || 'Standard setup.'}</div>
     </div>
     <div style="background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px;margin-bottom:12px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">
@@ -1639,6 +1645,27 @@ function tradeDetailHTML(s) {
     html += `<div style="background:rgba(251,191,36,.04);border:1px solid rgba(251,191,36,.15);border-radius:6px;padding:8px 10px;margin-top:8px">
       <div style="font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);margin-bottom:4px">Earnings Calendar</div>
       <div style="font-size:11px;color:var(--muted)">ℹ️ No upcoming earnings found for ${s.symbol} — or date not yet announced.</div>
+    </div>`;
+  }
+
+  // ── Paper Buy / Manual Entry Button ──
+  // Always show this at the bottom of the trade detail panel
+  if (s.safety === 'TRADE_READY') {
+    html += `<div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border)">
+      <button onclick="enterPaper('${s.symbol}')"
+        style="width:100%;padding:12px;background:rgba(52,211,153,.15);color:var(--green);border:1px solid rgba(52,211,153,.35);border-radius:8px;font-size:14px;font-weight:700;cursor:pointer;letter-spacing:0.5px"
+        onmouseover="this.style.background='rgba(52,211,153,.25)'" onmouseout="this.style.background='rgba(52,211,153,.15)'">
+        ✓ Paper Buy ${s.symbol} — Enter Trade Now
+      </button>
+      <div style="font-size:10px;color:var(--muted);text-align:center;margin-top:6px">
+        Entry: ${money(s.entry)} · Stop: ${money(s.stop)} · Target: ${money(s.target1)} · Risk: 1% of account
+      </div>
+    </div>`;
+  } else if (s.safety === 'WATCHLIST') {
+    html += `<div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border)">
+      <div style="width:100%;padding:10px;background:rgba(251,191,36,.08);color:var(--yellow);border:1px solid rgba(251,191,36,.25);border-radius:8px;font-size:12px;text-align:center">
+        ⊙ Watchlist — not ready to buy yet. Check the "Why not TRADE_READY" section above.
+      </div>
     </div>`;
   }
 

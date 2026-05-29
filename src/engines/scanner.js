@@ -1180,7 +1180,9 @@ function buildSignal(symbol, bars, spyMove21, marketBias, settings = {}, histori
   }
 
   // Category 3: Volume confirmation
-  if (volumeRatio && volumeRatio >= 1.3) {
+  // Use 0.9x as minimum for multi-factor count (scoring still rewards higher volume)
+  // ETFs and large caps often trade below 1.3x average during midday - that's normal
+  if (volumeRatio && volumeRatio >= 0.9) {
     confirmedCategories++;
     confirmationDetails.push("Volume ✓");
   }
