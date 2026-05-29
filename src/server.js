@@ -72,7 +72,7 @@ async function fetchIntradayRvolForSymbols(symbols) {
 }
 
 async function getUniverse(force = false) {
-  if (!force && lastUniverse && Date.now() - lastUniverseTime < 180000) {
+  if (!force && lastUniverse && Date.now() - lastUniverseTime < 900000) { // 15 min cache — daily bars don't change during the day
     if (isMarketHours()) {
       try {
         const liveResult = await fetchLiveQuotes(Object.keys(lastUniverse.completedBarsBySymbol || lastUniverse.barsBySymbol));
