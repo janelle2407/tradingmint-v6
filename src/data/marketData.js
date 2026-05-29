@@ -147,4 +147,67 @@ function dataQualityScore(bars) {
   };
 }
 
-module.exports = { DEFAULT_SYMBOLS, RANGE_FALLBACKS, yahooBars, yahooBarsWithFallback, fetchUniverse, round, percentMove, dataQualityScore };
+
+// ─── Earnings Calendar ────────────────────────────────────────────────────────
+// Fetches next earnings date from Yahoo Finance (free, no API key needed)
+// Returns null if unavailable so the filter degrades gracefully
+
+const earningsCache = new Map();
+const EARNINGS_CACHE_TTL = 6 * 60 * 60 * 1000; // 6 hours
+
+async function fetchEarningsDate(symbol) {
+  const clean = String(symbol || "").trim().toUpperCase();
+  const cached = earningsCache.get(clean);
+  if (cached && Date.now() - cached.time < EARNINGS_CACHE_TTL) return cached.date;
+
+  try {
+    const url = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(clean)}?modules=calendarEvents`;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+    try {
+      const res = await fetch(url, {
+        signal: controller.signal,
+        headers: { "User-Agent": "Mozilla/5.0", "Accept": "application/json" }
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      const earnings = data?.quoteSummary?.result?.[0]?.calendarEvents?.earnings;
+      const dates = earnings?.earningsDate || [];
+      // Yahoo returns array of timestamps — take the nearest future one
+      const now = Date.now() / 1000;
+      const next = dates
+        .map(d => Number(d.raw || d))
+        .filter(ts => ts > now - 86400) // include today
+        .sort((a, b) => a - b)[0];
+      const dateStr = next ? new Date(next * 1000).toISOString().slice(0, 10) : null;
+      earningsCache.set(clean, { date: dateStr, time: Date.now() });
+      return dateStr;
+    } finally {
+      clearTimeout(timeout);
+    }
+  } catch {
+    earningsCache.set(clean, { date: null, time: Date.now() });
+    return null;
+  }
+}
+
+async function fetchEarningsCalendar(symbols) {
+  const calendar = {};
+  const BATCH = 6;
+  const unique = [...new Set(symbols.map(s => s.toUpperCase()))];
+  for (let i = 0; i < unique.length; i += BATCH) {
+    const batch = unique.slice(i, i + BATCH);
+    const results = await Promise.allSettled(
+      batch.map(sym => fetchEarningsDate(sym).then(date => ({ sym, date })))
+    );
+    for (const r of results) {
+      if (r.status === "fulfilled" && r.value.date) {
+        calendar[r.value.sym] = { date: r.value.date };
+      }
+    }
+    if (i + BATCH < unique.length) await new Promise(r => setTimeout(r, 150));
+  }
+  return calendar;
+}
+
+module.exports = { DEFAULT_SYMBOLS, RANGE_FALLBACKS, yahooBars, yahooBarsWithFallback, fetchUniverse, round, percentMove, dataQualityScore, fetchEarningsCalendar, fetchEarningsDate };

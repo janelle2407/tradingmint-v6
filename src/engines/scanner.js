@@ -532,7 +532,7 @@ function addRsPercentiles(signals) {
 
 // ─── Main Signal Builder ───────────────────────────────────────────────────
 
-function buildSignal(symbol, bars, spyMove21, marketBias, settings = {}, historicalEdges = {}, barsBySymbol = {}) {
+function buildSignal(symbol, bars, spyMove21, marketBias, settings = {}, historicalEdges = {}, barsBySymbol = {}, earningsCalendar = {}) {
   const closes = bars.map(b => b.close);
   const volumes = bars.map(b => b.volume || 0);
   const last = bars[bars.length - 1];
@@ -833,6 +833,23 @@ function buildSignal(symbol, bars, spyMove21, marketBias, settings = {}, histori
     reasons.push(`${confirmedCategories}/6 confirmation categories align: ${confirmationDetails.join(", ")}.`);
   }
 
+  // ── Earnings Check ──
+  // Block trades within 3 days of earnings — unpredictable gap risk
+  const earningsEvent = earningsCalendar[symbol];
+  let earningsWarning = null;
+  let earningsBlocked = false;
+  if (earningsEvent?.date) {
+    const daysToEarnings = (new Date(earningsEvent.date) - new Date()) / 86400000;
+    if (daysToEarnings >= 0 && daysToEarnings <= 3) {
+      earningsBlocked = true;
+      earningsWarning = `⚠️ Earnings in ${Math.ceil(daysToEarnings)} day${Math.ceil(daysToEarnings) === 1 ? "" : "s"} (${earningsEvent.date}) — trade blocked. Earnings can cause unpredictable 5-20% gaps.`;
+      warnings.push(earningsWarning);
+    } else if (daysToEarnings > 3 && daysToEarnings <= 14) {
+      earningsWarning = `📅 Earnings in ${Math.ceil(daysToEarnings)} days (${earningsEvent.date}) — be aware. Consider reducing size.`;
+      warnings.push(earningsWarning);
+    }
+  }
+
   // ── Safety Decision ──
   let safety = "REJECT";
 
@@ -855,7 +872,8 @@ function buildSignal(symbol, bars, spyMove21, marketBias, settings = {}, histori
     edge.passed &&
     trendStrong &&
     sectorOk &&
-    multiFactorOk
+    multiFactorOk &&
+    !earningsBlocked
   ) safety = "TRADE_READY";
   else if (confidence >= 62) safety = "WATCHLIST";
 
@@ -863,20 +881,83 @@ function buildSignal(symbol, bars, spyMove21, marketBias, settings = {}, histori
   // so grade is initially null here — scanMarket will set it
   const grade = null;
 
-  // Why rejected summary — helps user understand what's missing
+  // Why rejected summary — actionable, specific reasons with numbers
   const rejectedReasons = [];
-  if (marketBias !== "BULLISH") rejectedReasons.push("Market regime not fully bullish");
-  if (!edge.passed) rejectedReasons.push("Historical edge not proven (need 20+ trades)");
-  if (sectorCheck.bullish === false) rejectedReasons.push(`Sector (${sectorCheck.etf}) is weak`);
-  if (rs.rs3m != null && rs.rs3m < 0) rejectedReasons.push("Relative strength below S&P 500");
-  if (volumeRatio && volumeRatio < 1.0) rejectedReasons.push("Volume not confirming");
-  if (stretched) rejectedReasons.push("Price looks extended");
-  if (rrNumber < settings.minRiskReward) rejectedReasons.push(`R/R ${rrNumber} below minimum ${settings.minRiskReward}`);
-  if (!trendBull) rejectedReasons.push("Not all trend filters bullish");
-  if (adxVal && adxVal < 20) rejectedReasons.push("Trend too weak (ADX < 20)");
-  if (!multiFactorOk) rejectedReasons.push(`Only ${confirmedCategories}/6 confirmation factors align (need 3+)`);
-  if (aboveVwap === false) rejectedReasons.push("Price below VWAP — sellers in control");
-  if (!candle.strong && setup === "Breakout") rejectedReasons.push("Weak candle body on breakout — indecision");
+
+  // 1. Market regime — explain exactly what needs to change
+  if (marketBias !== "BULLISH") {
+    const regime = scanned?.market?.regime || marketBias;
+    const breadth = scanned?.market?.breadth;
+    const indexScore = scanned?.market?.indexScore;
+    const needed = [];
+    if (breadth != null && breadth < 55) needed.push(`breadth needs to reach 55% (currently ${breadth}%)`);
+    if (indexScore != null && indexScore < 6) needed.push(`SPY/QQQ need more MAs aligned (${indexScore}/10 now, need 6+)`);
+    rejectedReasons.push(
+      marketBias === "BEARISH"
+        ? `Market is BEARISH — no longs until conditions improve. ${needed.join(", ") || "Wait for breadth and index recovery."}`
+        : `Market is NEUTRAL — to go BULLISH: ${needed.join(", ") || "breadth and index structure need to improve."}`
+    );
+  }
+
+  // 2. Historical edge — show progress toward 20 trades
+  if (!edge.passed) {
+    const trades = Number(edge.stats?.trades || 0);
+    const needed = Number(settings.minHistoricalTrades || 20);
+    if (trades === 0) {
+      rejectedReasons.push(`Historical edge not proven yet — run a Backtest first to collect data (need ${needed} trades).`);
+    } else {
+      rejectedReasons.push(`Historical edge building: ${trades}/${needed} trades collected. Run more backtests to prove the edge.`);
+    }
+  }
+
+  // 3. Sector weak
+  if (sectorCheck.bullish === false) rejectedReasons.push(`Sector ETF (${sectorCheck.etf}) is in a downtrend — avoid stocks in weak sectors.`);
+
+  // 4. RS below market
+  if (rs.rs3m != null && rs.rs3m < 0) rejectedReasons.push(`Relative strength is ${rs.rs3m}% below S&P 500 over 3 months — only trade market leaders.`);
+
+  // 5. Volume — show actual ratio vs needed
+  if (volumeRatio && volumeRatio < 1.0) {
+    rejectedReasons.push(`Volume only ${round(volumeRatio, 2)}x average — needs 1.3x+ for confirmation. Buyers not yet active.`);
+  } else if (volumeRatio && volumeRatio < 1.3) {
+    rejectedReasons.push(`Volume ${round(volumeRatio, 2)}x average — marginal. Needs 1.3x+ for solid confirmation.`);
+  }
+
+  // 6. Extended — show exact distance from EMA20
+  if (stretched) {
+    const extPct = ema20 ? round(((price - ema20) / ema20) * 100, 1) : null;
+    rejectedReasons.push(
+      extPct != null
+        ? `Price is ${extPct}% above EMA20 (max comfortable is ~9%) — too extended. Wait for a pullback to EMA20.`
+        : "Price looks extended — wait for a pullback before entering."
+    );
+  }
+
+  // 7. R/R too low
+  if (rrNumber < settings.minRiskReward) rejectedReasons.push(`Risk/reward is ${rrNumber}:1 — below the ${settings.minRiskReward}:1 minimum. Stop is too close or target too near.`);
+
+  // 8. Trend not aligned
+  if (!trendBull) {
+    const issues = [];
+    if (price <= ema20) issues.push(`price (${round(price)}) is below EMA20 (${round(ema20)})`);
+    if (ema20 && ema50 && ema20 <= ema50) issues.push(`EMA20 (${round(ema20)}) is below EMA50 (${round(ema50)})`);
+    rejectedReasons.push(`Trend not aligned: ${issues.join(", ") || "EMAs not stacked bullishly"}.`);
+  }
+
+  // 9. Choppy market
+  if (adxVal && adxVal < 20) rejectedReasons.push(`Trend strength weak — ADX is ${round(adxVal)} (need 20+). Market is choppy, not trending.`);
+
+  // 10. Multi-factor
+  if (!multiFactorOk) rejectedReasons.push(`Only ${confirmedCategories}/6 confirmation factors align (need 3+): ${confirmationDetails.join(", ") || "none"}.`);
+
+  // 11. VWAP
+  if (aboveVwap === false) rejectedReasons.push(`Price ($${round(price)}) is below VWAP ($${round(vwap)}) — sellers in control. Wait for price to reclaim VWAP.`);
+
+  // 12. Weak candle
+  if (!candle.strong && setup === "Breakout") rejectedReasons.push(`Breakout candle body is only ${candle.bodyPct}% of range — wick-heavy candle means indecision, not conviction.`);
+
+  // 13. Earnings too close
+  if (earningsBlocked) rejectedReasons.push(earningsWarning || "Earnings within 3 days — trade blocked.");
 
   return {
     symbol,
@@ -920,6 +1001,9 @@ function buildSignal(symbol, bars, spyMove21, marketBias, settings = {}, histori
     candleStrong: candle.strong,
     confirmedCategories,
     confirmationDetails,
+    earningsDate: earningsEvent?.date || null,
+    earningsBlocked,
+    earningsWarning,
     volumeRatio: round(volumeRatio, 2),
     sectorEtf: sectorCheck.etf,
     sectorBullish: sectorCheck.bullish,
@@ -985,7 +1069,7 @@ function assignSignalGrade(signal, marketRegime) {
 
 // ─── Market Scan ───────────────────────────────────────────────────────────
 
-function scanMarket(barsBySymbol, settings = {}, historicalEdges = {}, liveQuotes = {}) {
+function scanMarket(barsBySymbol, settings = {}, historicalEdges = {}, liveQuotes = {}, earningsCalendar = {}) {
   const spyBars = barsBySymbol.SPY || [];
   const spyCloses = spyBars.map(b => b.close);
   const spyMove21 = spyCloses.length > 22
@@ -996,7 +1080,7 @@ function scanMarket(barsBySymbol, settings = {}, historicalEdges = {}, liveQuote
   // First pass with neutral bias to determine regime
   const preliminary = Object.keys(barsBySymbol)
     .filter(s => !excluded.has(s))
-    .map(s => buildSignal(s, barsBySymbol[s], spyMove21, "NEUTRAL", settings, historicalEdges, barsBySymbol));
+    .map(s => buildSignal(s, barsBySymbol[s], spyMove21, "NEUTRAL", settings, historicalEdges, barsBySymbol, earningsCalendar));
 
   // Try real VIX data first, fall back to SPY-calculated historical volatility
   // Yahoo Finance blocks ^VIX from server IPs, so we calculate it from SPY returns
@@ -1007,7 +1091,7 @@ function scanMarket(barsBySymbol, settings = {}, historicalEdges = {}, liveQuote
   // Second pass with known regime
   const signals = Object.keys(barsBySymbol)
     .filter(s => !excluded.has(s))
-    .map(s => buildSignal(s, barsBySymbol[s], spyMove21, preRegime.regime, settings, historicalEdges, barsBySymbol))
+    .map(s => buildSignal(s, barsBySymbol[s], spyMove21, preRegime.regime, settings, historicalEdges, barsBySymbol, earningsCalendar))
     .sort((a, b) => b.confidence - a.confidence)
     .map((s, i) => ({ rank: i + 1, ...s }));
 
