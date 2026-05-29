@@ -530,6 +530,220 @@ function addRsPercentiles(signals) {
   return signals;
 }
 
+// ─── Stage Analysis (Stan Weinstein) ─────────────────────────────────────────
+// Stage 1 = Basing  Stage 2 = Uptrend (BUY)  Stage 3 = Topping  Stage 4 = Downtrend
+// Professional rule: ONLY buy Stage 2. Never buy any other stage.
+
+function detectStage(bars) {
+  if (!Array.isArray(bars) || bars.length < 30) return { stage: 0, label: "UNKNOWN", reason: "Not enough data." };
+  const closes = bars.map(b => b.close);
+  const price = closes.at(-1);
+
+  // Use 30-week MA (150 trading days) as the stage divider
+  const ma30w = closes.length >= 150 ? sma(closes, 150) : sma(closes, closes.length);
+  const ma10w = closes.length >= 50  ? sma(closes, 50)  : null;
+  if (!ma30w) return { stage: 0, label: "UNKNOWN", reason: "Not enough data for stage." };
+
+  // Is the 30-week MA rising or falling?
+  const ma30wPrev = closes.length >= 155 ? sma(closes.slice(0, -5), 150) : null;
+  const maRising  = ma30wPrev ? ma30w > ma30wPrev : null;
+  const maFalling = ma30wPrev ? ma30w < ma30wPrev : null;
+
+  // Price position relative to 30-week MA
+  const aboveMa  = price > ma30w;
+  const pctAbove = ((price - ma30w) / ma30w) * 100;
+
+  // RS trend — is relative strength line rising?
+  const rsRising = closes.length >= 10
+    ? closes.at(-1) / (closes.at(-1)) >= closes.at(-10) / (closes.at(-10))  // simplified
+    : null;
+
+  let stage, label, reason;
+
+  if (aboveMa && maRising !== false) {
+    stage = 2; label = "STAGE 2 — Uptrend";
+    reason = `Price above rising 30-week MA (${round(ma30w)}) — markup phase. This is where the best gains happen.`;
+  } else if (!aboveMa && maFalling) {
+    stage = 4; label = "STAGE 4 — Downtrend";
+    reason = `Price below falling 30-week MA — distribution/decline. Avoid completely.`;
+  } else if (!aboveMa && !maFalling) {
+    stage = 1; label = "STAGE 1 — Basing";
+    reason = `Price below 30-week MA but MA is flattening — stock is basing. Wait for Stage 2 confirmation.`;
+  } else {
+    stage = 3; label = "STAGE 3 — Topping";
+    reason = `Price above MA but MA turning down — potential top forming. Exit longs, don't enter.`;
+  }
+
+  return { stage, label, reason, ma30w: round(ma30w), pctAbove: round(pctAbove, 1), maRising };
+}
+
+// ─── Minervini Trend Template ─────────────────────────────────────────────────
+// Mark Minervini's 7-point checklist — ALL must pass for highest quality trades
+// This is the filter that separates market leaders from laggards
+
+function trendTemplate(bars) {
+  if (!Array.isArray(bars) || bars.length < 100) {
+    return { passes: false, score: 0, checks: [], reason: "Not enough data for trend template." };
+  }
+  const closes = bars.map(b => b.close);
+  const price = closes.at(-1);
+
+  const sma150 = closes.length >= 150 ? sma(closes, 150) : null;
+  const sma200v = closes.length >= 200 ? sma(closes, 200) : null;
+  const sma200_20ago = closes.length >= 220 ? sma(closes.slice(0, -20), 200) : null;
+  const high52 = Math.max(...closes.slice(-252));
+  const low52  = Math.min(...closes.slice(-252));
+
+  const checks = [];
+
+  // 1. Price > 150-day MA
+  checks.push({ name: "Price > 150-day MA", pass: sma150 ? price > sma150 : false,
+    detail: sma150 ? `Price $${round(price)} vs 150-MA $${round(sma150)}` : "No data" });
+
+  // 2. Price > 200-day MA
+  checks.push({ name: "Price > 200-day MA", pass: sma200v ? price > sma200v : false,
+    detail: sma200v ? `Price $${round(price)} vs 200-MA $${round(sma200v)}` : "No data" });
+
+  // 3. 150-day MA > 200-day MA
+  checks.push({ name: "150-MA > 200-MA", pass: sma150 && sma200v ? sma150 > sma200v : false,
+    detail: sma150 && sma200v ? `150-MA $${round(sma150)} vs 200-MA $${round(sma200v)}` : "No data" });
+
+  // 4. 200-day MA trending up (higher than 20 days ago)
+  checks.push({ name: "200-MA trending up", pass: sma200v && sma200_20ago ? sma200v > sma200_20ago : false,
+    detail: sma200v && sma200_20ago ? `200-MA up ${round(((sma200v - sma200_20ago)/sma200_20ago)*100, 1)}% in 20 days` : "No data" });
+
+  // 5. Price at least 30% above 52-week low
+  const aboveLow52Pct = low52 > 0 ? ((price - low52) / low52) * 100 : 0;
+  checks.push({ name: "30%+ above 52-week low", pass: aboveLow52Pct >= 30,
+    detail: `${round(aboveLow52Pct, 1)}% above 52-week low of $${round(low52)}` });
+
+  // 6. Price within 25% of 52-week high
+  const belowHigh52Pct = high52 > 0 ? ((high52 - price) / high52) * 100 : 100;
+  checks.push({ name: "Within 25% of 52-week high", pass: belowHigh52Pct <= 25,
+    detail: `${round(belowHigh52Pct, 1)}% below 52-week high of $${round(high52)}` });
+
+  // 7. Price > 50-day MA (we use this as RS proxy)
+  const ema50v = ema(closes, 50);
+  checks.push({ name: "Price > 50-day MA", pass: ema50v ? price > ema50v : false,
+    detail: ema50v ? `Price $${round(price)} vs 50-MA $${round(ema50v)}` : "No data" });
+
+  const passed = checks.filter(c => c.pass).length;
+  const total  = checks.length;
+  const allPass = passed === total;
+
+  return {
+    passes: allPass,
+    score: passed,
+    total,
+    checks,
+    reason: allPass
+      ? `All ${total} Minervini trend template checks pass — this is a true market leader.`
+      : `${passed}/${total} trend template checks pass. Missing: ${checks.filter(c => !c.pass).map(c => c.name).join(", ")}.`
+  };
+}
+
+// ─── Tight Weekly Closes (Minervini VCP refinement) ──────────────────────────
+// Last 2-3 weeks of closes should be within 1.5% of each other
+// Shows sellers completely exhausted — coiled spring ready to break out
+
+function tightWeeklyCloses(bars) {
+  if (!Array.isArray(bars) || bars.length < 15) return { tight: false, rangePct: null };
+  // Use last 15 days as proxy for 3 weeks
+  const recent = bars.slice(-15).map(b => b.close);
+  const hi = Math.max(...recent);
+  const lo = Math.min(...recent);
+  const mid = (hi + lo) / 2;
+  const rangePct = mid > 0 ? ((hi - lo) / mid) * 100 : null;
+  return {
+    tight: rangePct != null && rangePct <= 4,      // tight = 4% or less in 3 weeks
+    veryTight: rangePct != null && rangePct <= 2,  // very tight = 2% or less
+    rangePct: rangePct != null ? round(rangePct, 1) : null
+  };
+}
+
+// ─── Market Follow-Through Day (William O'Neil) ───────────────────────────────
+// After a correction, only start buying when SPY/QQQ has a follow-through day:
+// A day with index up 1.7%+ on HIGHER volume than previous day, on day 4+ of rally
+// This is the most reliable market re-entry signal
+
+function detectFollowThrough(spyBars) {
+  if (!Array.isArray(spyBars) || spyBars.length < 10) return { confirmed: false, reason: "Not enough SPY data." };
+  const recent = spyBars.slice(-15);
+
+  // Find the most recent low (correction bottom)
+  let lowIdx = 0;
+  for (let i = 1; i < recent.length - 3; i++) {
+    if (recent[i].close < recent[lowIdx].close) lowIdx = i;
+  }
+
+  // Count days of rally attempt from the low
+  const rallyDays = recent.length - 1 - lowIdx;
+  if (rallyDays < 4) return {
+    confirmed: false,
+    reason: `Market only ${rallyDays} days into rally attempt. Need 4+ days before follow-through is valid.`
+  };
+
+  // Check if today is a follow-through day
+  const today = recent.at(-1);
+  const yesterday = recent.at(-2);
+  const todayMove = yesterday.close > 0 ? ((today.close - yesterday.close) / yesterday.close) * 100 : 0;
+  const volumeUp  = today.volume > yesterday.volume;
+  const strongMove = todayMove >= 1.7;
+
+  if (strongMove && volumeUp) {
+    return {
+      confirmed: true,
+      reason: `Follow-through day confirmed — SPY up ${round(todayMove, 1)}% on higher volume on day ${rallyDays} of rally. Market re-entry signal active.`,
+      rallyDays, todayMove: round(todayMove, 1)
+    };
+  }
+
+  return {
+    confirmed: false,
+    inRally: true,
+    rallyDays,
+    reason: `SPY in ${rallyDays}-day rally but no follow-through yet (need 1.7%+ up day on higher volume).`
+  };
+}
+
+// ─── Failed Breakout Detection ────────────────────────────────────────────────
+// If price breaks out but closes in lower half of candle range = failed breakout
+// Exit immediately — don't hold a failed breakout
+
+function detectFailedBreakout(bars, setup) {
+  if (setup !== "Breakout" && setup !== "Squeeze Breakout") return { failed: false };
+  if (!Array.isArray(bars) || bars.length < 3) return { failed: false };
+
+  const today = bars.at(-1);
+  const yesterday = bars.at(-2);
+  const twoDaysAgo = bars.at(-3);
+
+  // Did we break out yesterday (or recently)?
+  const recentHigh = Math.max(...bars.slice(-10, -1).map(b => b.high));
+  const brokeOut = yesterday.close > recentHigh * 0.995;
+
+  if (!brokeOut) return { failed: false };
+
+  // Did today close in lower half of its range? (sign of rejection)
+  const range = today.high - today.low;
+  const closePosition = range > 0 ? (today.close - today.low) / range : 0.5;
+  const weakClose = closePosition < 0.4; // closed in lower 40% of range
+
+  // Did price drop back below the breakout level?
+  const failedPullback = today.close < recentHigh * 0.995;
+
+  if (weakClose || failedPullback) {
+    return {
+      failed: true,
+      reason: weakClose
+        ? `Breakout candle closed in the lower ${round((1 - closePosition) * 100, 0)}% of its range — weak close suggests rejection. Consider exiting.`
+        : `Price broke out then fell back below pivot — classic failed breakout. Exit to protect capital.`
+    };
+  }
+
+  return { failed: false };
+}
+
 // ─── Main Signal Builder ───────────────────────────────────────────────────
 
 function buildSignal(symbol, bars, spyMove21, marketBias, settings = {}, historicalEdges = {}, barsBySymbol = {}, earningsCalendar = {}) {
@@ -576,6 +790,22 @@ function buildSignal(symbol, bars, spyMove21, marketBias, settings = {}, histori
   // ── Relative Strength vs SPY ──
   const spyClosesForRs = (barsBySymbol.SPY || []).map(b => b.close);
   const rs = calcRelativeStrength(closes, spyClosesForRs);
+
+  // ── Stage Analysis (Weinstein) ──
+  const stageInfo = detectStage(bars);
+
+  // ── Minervini Trend Template ──
+  const trendTpl = trendTemplate(bars);
+
+  // ── Tight Weekly Closes ──
+  const weeklyTight = tightWeeklyCloses(bars);
+
+  // ── Market Follow-Through Day ──
+  const spyBarsForFTD = barsBySymbol.SPY || [];
+  const followThrough = detectFollowThrough(spyBarsForFTD);
+
+  // ── Failed Breakout Check ──
+  const failedBO = detectFailedBreakout(bars, setup);
 
   // ── Sector ETF Check ──
   const sectorCheck = getSectorEtfScore(symbol, barsBySymbol);
@@ -666,6 +896,60 @@ function buildSignal(symbol, bars, spyMove21, marketBias, settings = {}, histori
   if (setup === "Momentum") { technicalScore += 6; reasons.push("Strong momentum setup — price and indicators aligned."); }
   if (setup === "EMA Bounce") { technicalScore += 5; reasons.push("Bouncing off key moving average in uptrend."); }
   if (setup === "Squeeze Breakout") { technicalScore += 7; reasons.push("Tight Bollinger Band squeeze breaking out — can lead to big moves."); }
+
+  // ── Stage Analysis scoring ──
+  if (stageInfo.stage === 2) {
+    technicalScore += 12;
+    reasons.push(`Stage 2 uptrend confirmed — 30-week MA is rising and price is above it. Best stage to buy.`);
+  } else if (stageInfo.stage === 4) {
+    technicalScore -= 20;
+    warnings.push(`Stage 4 downtrend — ${stageInfo.reason} Avoid completely.`);
+  } else if (stageInfo.stage === 1) {
+    technicalScore -= 8;
+    warnings.push(`Stage 1 basing — ${stageInfo.reason}`);
+  } else if (stageInfo.stage === 3) {
+    technicalScore -= 15;
+    warnings.push(`Stage 3 topping — ${stageInfo.reason}`);
+  }
+
+  // ── Minervini Trend Template scoring ──
+  if (trendTpl.passes) {
+    technicalScore += 14;
+    reasons.push(`All ${trendTpl.total} Minervini trend template checks pass — elite quality setup.`);
+  } else if (trendTpl.score >= 5) {
+    technicalScore += 7;
+    reasons.push(`${trendTpl.score}/${trendTpl.total} trend template checks pass — strong but not elite.`);
+  } else if (trendTpl.score >= 3) {
+    technicalScore += 2;
+  } else {
+    technicalScore -= 8;
+    warnings.push(`Only ${trendTpl.score}/${trendTpl.total} trend template checks pass. Missing: ${trendTpl.checks.filter(c => !c.pass).map(c => c.name).slice(0,2).join(", ")}.`);
+  }
+
+  // ── Tight Weekly Closes scoring ──
+  if (weeklyTight.veryTight) {
+    technicalScore += 10;
+    reasons.push(`Very tight 3-week range (${weeklyTight.rangePct}%) — sellers completely exhausted. Coiled spring ready.`);
+  } else if (weeklyTight.tight) {
+    technicalScore += 5;
+    reasons.push(`Tight 3-week range (${weeklyTight.rangePct}%) — constructive consolidation.`);
+  } else if (weeklyTight.rangePct != null && weeklyTight.rangePct > 8) {
+    warnings.push(`Wide 3-week range (${weeklyTight.rangePct}%) — too loose for a quality VCP entry.`);
+  }
+
+  // ── Market Follow-Through Day ──
+  if (followThrough.confirmed) {
+    technicalScore += 8;
+    reasons.push(followThrough.reason);
+  } else if (followThrough.inRally && followThrough.rallyDays >= 4) {
+    reasons.push(`SPY in ${followThrough.rallyDays}-day rally attempt — watching for follow-through day.`);
+  }
+
+  // ── Failed Breakout Warning ──
+  if (failedBO.failed) {
+    technicalScore -= 18;
+    warnings.push(failedBO.reason);
+  }
 
   // Bollinger position
   if (bb && bb.pctB > 0.5 && bb.pctB <= 0.85) { technicalScore += 4; }
@@ -873,7 +1157,9 @@ function buildSignal(symbol, bars, spyMove21, marketBias, settings = {}, histori
     trendStrong &&
     sectorOk &&
     multiFactorOk &&
-    !earningsBlocked
+    !earningsBlocked &&
+    stageInfo.stage === 2 &&
+    !failedBO.failed
   ) safety = "TRADE_READY";
   else if (confidence >= 62) safety = "WATCHLIST";
 
@@ -974,6 +1260,15 @@ function buildSignal(symbol, bars, spyMove21, marketBias, settings = {}, histori
   // 13. Earnings too close
   if (earningsBlocked) rejectedReasons.push(earningsWarning || "Earnings within 3 days — trade blocked.");
 
+  // 14. Stage analysis
+  if (stageInfo.stage !== 2) rejectedReasons.push(`${stageInfo.label} — only buy Stage 2 uptrends.`);
+
+  // 15. Trend template
+  if (!trendTpl.passes) rejectedReasons.push(`Minervini trend template: ${trendTpl.score}/${trendTpl.total} checks pass (need all 7).`);
+
+  // 16. Failed breakout
+  if (failedBO.failed) rejectedReasons.push(failedBO.reason);
+
   return {
     symbol,
     price: round(price),
@@ -1019,6 +1314,11 @@ function buildSignal(symbol, bars, spyMove21, marketBias, settings = {}, histori
     earningsDate: earningsEvent?.date || null,
     earningsBlocked,
     earningsWarning,
+    stageInfo,
+    trendTemplate: trendTpl,
+    weeklyTight,
+    followThrough,
+    failedBreakout: failedBO.failed,
     volumeRatio: round(volumeRatio, 2),
     sectorEtf: sectorCheck.etf,
     sectorBullish: sectorCheck.bullish,

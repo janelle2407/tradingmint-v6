@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>TradingMint PRO v6.9</title>
+<title>TradingMint PRO v7.0</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@700;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
@@ -420,7 +420,7 @@ label { font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: 
     <div class="logo-mark">M</div>
     <div class="logo-text">
       <div class="brand">TRADINGMINT</div>
-      <div class="sub">PRO v6.9 · Paper Only</div>
+      <div class="sub">PRO v7.0 · Paper Only</div>
     </div>
   </div>
 
@@ -1496,6 +1496,38 @@ function tradeDetailHTML(s) {
       <span style="color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:1px">MACD</span>
       <span style="margin-left:10px;font-family:var(--font-mono);color:${s.macd.bullish?'var(--green)':'var(--red)'}">${s.macd.bullish?'Bullish ▲':'Bearish ▼'}</span>
       ${s.macd.crossing?'<span style="margin-left:8px;font-size:10px;background:rgba(52,211,153,.15);color:var(--green);padding:2px 6px;border-radius:4px">Fresh Cross!</span>':''}
+    </div>`;
+  }
+
+  // Stage Analysis panel
+  if (s.stageInfo) {
+    const si = s.stageInfo;
+    const stageColor = si.stage === 2 ? 'var(--green)' : si.stage === 1 ? 'var(--yellow)' : 'var(--red)';
+    const stageIcon = si.stage === 2 ? '✅' : si.stage === 1 ? '⏳' : '🚫';
+    html += `<div style="background:var(--surface2);border:1px solid ${si.stage===2?'rgba(52,211,153,.3)':'rgba(248,113,113,.2)'};border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:10px">
+      <div style="font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);margin-bottom:6px">Stage Analysis (Weinstein)</div>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+        <span style="font-size:15px;font-weight:700;color:${stageColor}">${stageIcon} ${si.label}</span>
+      </div>
+      <div style="font-size:11px;color:var(--text2)">${si.reason}</div>
+    </div>`;
+  }
+
+  // Minervini Trend Template panel
+  if (s.trendTemplate) {
+    const tt = s.trendTemplate;
+    const ttColor = tt.passes ? 'var(--green)' : tt.score >= 5 ? 'var(--yellow)' : 'var(--red)';
+    html += `<div style="background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:10px">
+      <div style="font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);margin-bottom:6px">Minervini Trend Template</div>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+        <span style="font-size:14px;font-weight:700;color:${ttColor}">${tt.score}/${tt.total} checks pass</span>
+        ${tt.passes ? '<span style="font-size:10px;background:rgba(52,211,153,.2);color:var(--green);padding:2px 6px;border-radius:4px">ALL PASS</span>' : ''}
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:3px">
+        ${(tt.checks||[]).map(c => `<div style="font-size:10px;color:${c.pass?'var(--green)':'var(--muted)'}">
+          ${c.pass?'✓':'✗'} ${c.name}
+        </div>`).join('')}
+      </div>
     </div>`;
   }
 
