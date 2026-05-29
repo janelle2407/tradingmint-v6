@@ -28,7 +28,7 @@ const app = express();
 const PORT = process.env.PORT || 10000;
 const VERSION = "7.4.0-swing-edge-fixes";
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || "";
-const SCAN_LIMIT = Number(process.env.SCAN_LIMIT || process.env.UNIVERSE_LIMIT || 90);
+const SCAN_LIMIT = Number(process.env.SCAN_LIMIT || process.env.UNIVERSE_LIMIT || 55);
 
 app.use(express.json({ limit: "1mb" }));
 app.use(express.static(path.join(__dirname, "../public")));
@@ -166,14 +166,40 @@ async function buildState(force = false) {
   db.settings.startingCash = 5000;
   if (!Number.isFinite(Number(db.paper.cash))) db.paper.cash = 5000;
 
-  const universe = await getUniverse(force);
-  const edgeRun = await ensureBacktestEdges(db, universe, force);
+  // Safe timeout — return partial state instead of hanging on slow Yahoo
+  let universe;
+  try {
+    const universePromise = getUniverse(force);
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error("Data fetch timeout — Yahoo may be slow. Try refreshing in a moment.")), 25000)
+    );
+    universe = await Promise.race([universePromise, timeoutPromise]);
+  } catch (err) {
+    console.log(`[STATE] ${err.message}`);
+    const { getMarketSession } = require("./engines/marketHours");
+    return {
+      ok: true, partial: true, partialReason: err.message,
+      signals: [], market: { regime: "UNKNOWN", breadth: null },
+      marketSession: getMarketSession(),
+      paper: db.paper, settings: db.settings,
+      alerts: (db.alerts || []).slice(0, 20),
+      journal: (db.journal || []).slice(0, 20),
+      health: { status: "degraded", reason: err.message }
+    };
+  }
+  // Auto-backtest disabled — user must click Backtest button manually
+  // Running it automatically on every /api/state call caused Render timeouts
+  const edgeRun = { reused: true, result: null };
   const barsForScan = universe.completedBarsBySymbol || universe.barsBySymbol;
   const symbols = Object.keys(barsForScan);
 
+  // These can be disabled via env vars if Yahoo is throttling on your host
+  const enableEarnings = process.env.ENABLE_EARNINGS !== "false";
+  const enableFundamentals = process.env.ENABLE_FUNDAMENTALS !== "false";
+
   const [earningsCalendar, fundamentalsData, intradayRvolBySymbol] = await Promise.all([
-    fetchEarningsCalendar(symbols).catch(() => ({})),
-    fetchFundamentalsForUniverse(symbols).catch(() => ({})),
+    enableEarnings ? fetchEarningsCalendar(symbols).catch(() => ({})) : Promise.resolve({}),
+    enableFundamentals ? fetchFundamentalsForUniverse(symbols).catch(() => ({})) : Promise.resolve({}),
     fetchIntradayRvolForSymbols(symbols).catch(() => ({}))
   ]);
 

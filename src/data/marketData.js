@@ -1,18 +1,24 @@
 const cache = new Map();
 
 const DEFAULT_SYMBOLS = [
-  "SPY", "QQQ", "DIA", "IWM",
-  "NVDA", "AVGO", "AMD", "META", "PLTR", "TSLA", "CRWD", "AMZN", "AAPL", "MSFT",
-  "GOOGL", "NFLX", "COST", "LLY", "JPM", "SMCI", "MSTR", "COIN", "HOOD",
-  "ORCL", "CRM", "ADBE", "PANW", "NOW", "SNOW", "SHOP", "UBER", "MU", "QCOM",
-  "WMT", "HD", "MA", "V", "BAC", "XOM", "CVX", "CAT", "DE", "GE",
-  "LRCX", "KLAC", "AMAT", "INTC", "MRVL", "ARM", "NET", "DDOG", "ZS",
-  "MELI", "ABNB", "DASH", "RBLX", "ROKU", "SQ", "PYPL", "SOFI",
-  "ANET", "APP", "VRT", "DELL", "TSM", "ASML", "ON", "MCHP", "TXN",
-  "TTD", "MDB", "TEAM", "OKTA", "DUOL", "AXON", "CAVA", "ELF", "CELH", "WING",
-  "FSLR", "ENPH", "NVO", "ISRG", "VRTX", "REGN", "SCHW", "GS", "MS", "KKR",
-  "XLE", "XLK", "XLF", "XLV", "XLY", "XLI", "XLP", "XLU", "XLB", "XLRE",
-  "SMH", "SOXX", "IGV", "CIBR", "IHAK", "XBI", "IBB", "KRE", "KBE", "XRT", "SKYY"
+  // Market ETFs — always needed for regime detection
+  "SPY", "QQQ", "IWM",
+  // Sector ETFs — best proxies for each sector
+  "XLK", "XLF", "XLV", "XLY", "XLI", "XLE", "SMH", "IGV", "XBI", "CIBR",
+  // Mega cap tech — highest volume, most liquid
+  "NVDA", "AAPL", "MSFT", "META", "GOOGL", "AMZN", "TSLA",
+  // Semiconductors — highest momentum group
+  "AVGO", "AMD", "ARM", "MRVL", "KLAC", "LRCX",
+  // Software & cloud
+  "CRWD", "ORCL", "NOW", "PANW", "SNOW", "NET", "DDOG",
+  // Growth leaders
+  "PLTR", "APP", "HOOD", "RBLX", "COIN",
+  // Healthcare & biotech
+  "LLY", "NVO", "ISRG",
+  // Financials
+  "JPM", "GS", "BAC",
+  // Other high-quality
+  "COST", "NFLX", "UBER", "ANET", "GE", "TSM", "ASML"
 ];
 
 function parseSymbolList(value) {
@@ -54,7 +60,7 @@ async function yahooBarsRaw(symbol, range = "max", interval = "1d") {
   ];
   const url = urls[0]; // primary
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 12000);
+  const timeout = setTimeout(() => controller.abort(), 6000); // fail fast — better to skip than hang
 
   try {
     const response = await fetch(url, {
@@ -126,9 +132,10 @@ async function yahooBarsRaw(symbol, range = "max", interval = "1d") {
 }
 
 async function yahooBarsWithFallback(symbol, preferredRange = "max", interval = "1d") {
+  // Only try max then one fallback — walking all ranges is too slow on cloud hosts
   const ranges = preferredRange === "max"
-    ? RANGE_FALLBACKS
-    : [preferredRange, ...RANGE_FALLBACKS.filter(r => r !== preferredRange)];
+    ? ["max", "5y"]
+    : [preferredRange, "5y"].filter((r, i, a) => a.indexOf(r) === i);
 
   const errors = [];
   for (const range of ranges) {
@@ -152,11 +159,15 @@ async function fetchUniverse(symbols = getConfiguredSymbols(), limit = 120, rang
 
   // Process in batches of 8 in parallel — fast but won't overwhelm Yahoo
   const BATCH = 8;
+  let emptyBatches = 0;
+  const STOP_AFTER_EMPTY = Number(process.env.STOP_AFTER_EMPTY_BATCHES || 2);
+
   for (let i = 0; i < unique.length; i += BATCH) {
     const batch = unique.slice(i, i + BATCH);
     const results = await Promise.allSettled(
       batch.map(symbol => yahooBarsWithFallback(symbol, range, "1d").then(r => ({ symbol, r })))
     );
+    let batchSuccess = 0;
     for (const result of results) {
       if (result.status === "fulfilled") {
         const { symbol, r } = result.value;
@@ -165,12 +176,24 @@ async function fetchUniverse(symbols = getConfiguredSymbols(), limit = 120, rang
           usedRange: r.usedRange, interval: r.interval,
           firstDate: r.firstDate, lastDate: r.lastDate, barCount: r.barCount
         };
+        batchSuccess++;
       } else {
-        // Extract symbol from error or batch
         const idx = results.indexOf(result);
         errors.push({ symbol: batch[idx], error: result.reason?.message || "unknown" });
       }
     }
+    // Circuit breaker: if too many consecutive empty batches, Yahoo is throttling — stop
+    if (batchSuccess === 0) {
+      emptyBatches++;
+      if (emptyBatches >= STOP_AFTER_EMPTY) {
+        console.log(`[CIRCUIT BREAKER] ${emptyBatches} empty batches — Yahoo throttling detected. Returning partial data.`);
+        break;
+      }
+    } else {
+      emptyBatches = 0;
+    }
+    // Small delay between batches
+    if (i + BATCH < unique.length) await new Promise(r => setTimeout(r, 100));
   }
 
   return { barsBySymbol, metaBySymbol, errors, requested: unique, range, interval: "1d", rangeFallbacks: RANGE_FALLBACKS };
