@@ -1,4 +1,5 @@
 const { applyCosts, canEnter } = require("./risk");
+function round(v, d=2) { const n=Number(v); return Number.isFinite(n)?Number(n.toFixed(d)):null; }
 const { addAlert, addJournal } = require("../storage/db");
 const { exposureBlocked } = require("./correlation");
 
