@@ -1399,6 +1399,7 @@ function buildSignal(symbol, bars, spyMove21, marketBias, settings = {}, histori
     relativeStrength: round(relativeStrength, 2),
     rs,
     vwap: vwap ? round(vwap) : null,
+    ema20: ema20 ? round(ema20) : null,
     aboveVwap,
     vwapDist,
     candleBodyPct: candle.bodyPct,
