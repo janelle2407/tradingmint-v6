@@ -3,3 +3,6 @@ node_modules/
 .DS_Store
 npm-debug.log*
 data/tradingmint-db.json
+data/tradingmint.sqlite
+data/*.sqlite
+data/*.sqlite-*

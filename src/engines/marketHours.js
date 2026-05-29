@@ -2,9 +2,9 @@
 // US market: 9:30 AM – 4:00 PM Eastern Time (ET)
 // Auto-paper trades allowed throughout the full session with these rules:
 //   - Skip first 15 mins (9:30–9:45) — chaotic open
-//   - Skip lunch (11:30–1:30) — low volume, unreliable
+//   - Skip lunch (12:00–1:00) — low volume, unreliable
 //   - Skip last 15 mins (3:45–4:00) — close-day noise
-//   - Active windows: 9:45–11:30 AM and 1:30–3:45 PM ET
+//   - Active windows: 9:45 AM–12:00 PM and 1:00–3:45 PM ET
 // Sydney times (AEST = ET + 14h in May/winter, ET + 15h in Nov/summer)
 
 function getETComponents() {
@@ -41,8 +41,8 @@ function getMarketSession() {
   const PRE_MARKET_START  = 4  * 60;        // 4:00 AM ET
   const MARKET_OPEN       = 9  * 60 + 30;   // 9:30 AM ET
   const SESSION_START     = 9  * 60 + 45;   // 9:45 AM ET — skip first 15 mins chaos
-  const LUNCH_START       = 12 * 60;         // 12:00 PM ET — lunch begins
-  const LUNCH_END         = 13 * 60;         // 1:00 PM ET  — lunch ends (1 hour pause)
+  const LUNCH_START       = 11 * 60 + 30;   // 11:30 AM ET — lunch begins
+  const LUNCH_END         = 13 * 60 + 30;   // 1:30 PM ET  — lunch ends
   const CLOSE_BUFFER      = 15 * 60 + 45;   // 3:45 PM ET  — no new entries last 15 mins
   const MARKET_CLOSE      = 16 * 60;        // 4:00 PM ET
   const AFTER_HOURS_END   = 20 * 60;        // 8:00 PM ET

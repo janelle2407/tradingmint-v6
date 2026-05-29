@@ -1,3 +1,4 @@
+const fs = require("fs");
 const path = require("path");
 
 function createSqliteAdapter() {
@@ -11,7 +12,8 @@ function createSqliteAdapter() {
     };
   }
 
-  const dbPath = path.join(__dirname, "../../data/tradingmint.sqlite");
+  const dbPath = process.env.SQLITE_PATH || path.join(__dirname, "../../data/tradingmint.sqlite");
+  fs.mkdirSync(path.dirname(dbPath), { recursive: true });
   const db = new Database(dbPath);
   db.pragma("journal_mode = WAL");
 

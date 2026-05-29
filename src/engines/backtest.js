@@ -5,8 +5,8 @@
 //     Portfolio simulation engine
 
 const { applyCosts } = require("./risk");
-const { sma, ema, rsi, atr, adx, macd, bollingerBands } = require("./scanner");
-const { sectorEtfOf } = require("../data/sectorMap");
+const { sma, ema, rsi, atr, adx, macd, bollingerBands, buildSignal } = require("./scanner");
+const { sectorEtfOf, sectorOf } = require("../data/sectorMap");
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -145,187 +145,220 @@ function classifySetup(close, high20, ema20v, ema50v, macdData, adxVal) {
 
 // ─── Signal Backtest ─────────────────────────────────────────────────────────
 
-function runSignalBacktest(symbol, bars, options = {}, barsBySymbol = {}, sharedRegimeCache = null) {
-  const minConf  = options.minConfidence || 72;
-  const minRR    = options.minRiskReward || 2.0;
-  const slipPct  = options.slippagePct   ?? 0.05;
-  const sprdPct  = options.spreadPct     ?? 0.03;
-  const holdDays = options.holdDays      || 10;
-  const settings = { slippagePct: slipPct, spreadPct: sprdPct };
+function spyMove21At(spyBars) {
+  const closes = (spyBars || []).map(bar => bar.close).filter(Number.isFinite);
+  return closes.length > 22 ? ((closes.at(-1) - closes[closes.length - 22]) / closes[closes.length - 22]) * 100 : 0;
+}
 
-  // Walk-forward date filter — only count trades in test window
+function historicalContextAtIndex(barsBySymbol, endIndex) {
+  const context = {};
+  for (const [symbol, rows] of Object.entries(barsBySymbol || {})) {
+    if (!Array.isArray(rows) || rows.length < 2) continue;
+    context[symbol] = rows.slice(0, Math.min(rows.length, endIndex + 1));
+  }
+  return context;
+}
+
+function runSignalBacktest(symbol, bars, options = {}, barsBySymbol = {}, sharedRegimeCache = null) {
+  const minConf = Number(options.minConfidence || 72);
+  const minRR = Number(options.minRiskReward || 2.0);
+  const slipPct = options.slippagePct ?? 0.05;
+  const sprdPct = options.spreadPct ?? 0.03;
+  const holdDays = Number(options.holdDays || 10);
+  const timeStopDays = Number(options.timeStopDays || Math.min(5, holdDays));
+  const costs = { slippagePct: slipPct, spreadPct: sprdPct };
+
   const countFrom = options.countTradesFromDate || null;
-  const countTo   = options.countTradesToDate   || null;
+  const countTo = options.countTradesToDate || null;
   function shouldCount(entryDate) {
     if (!entryDate) return true;
     if (countFrom && entryDate < countFrom) return false;
-    if (countTo   && entryDate > countTo)   return false;
+    if (countTo && entryDate > countTo) return false;
     return true;
   }
 
   const trades = [];
-  if (!Array.isArray(bars) || bars.length < 150) {
+  if (!Array.isArray(bars) || bars.length < 230) {
     return { symbol, trades: [], summary: emptySummary(), setupStats: {} };
   }
 
-  const spyBars  = barsBySymbol.SPY || [];
-  const spyCloses = spyBars.map(b => b.close);
-  const etfSymbol = sectorEtfOf(symbol);
-  const etfBars   = barsBySymbol[etfSymbol] || [];
-
-  // Cache regime every 10 bars for speed
-  // Use shared pre-computed regime cache if available (much faster)
-  // Falls back to per-symbol cache if called standalone
   const localCache = new Map();
   function getCachedRegime(idx) {
     const bucket = Math.floor(idx / 50) * 50;
-    if (sharedRegimeCache && sharedRegimeCache.has(bucket)) {
-      return sharedRegimeCache.get(bucket);
-    }
-    if (!localCache.has(bucket)) {
-      localCache.set(bucket, historicalRegimeAtIndex(barsBySymbol, bucket));
-    }
+    if (sharedRegimeCache && sharedRegimeCache.has(bucket)) return sharedRegimeCache.get(bucket);
+    if (!localCache.has(bucket)) localCache.set(bucket, historicalRegimeAtIndex(barsBySymbol, bucket));
     return localCache.get(bucket);
   }
 
-  for (let i = 100; i < bars.length - holdDays - 2; i++) {
-    const slice  = bars.slice(0, i + 1);
-    const closes = slice.map(b => b.close);
-    const close  = closes.at(-1);
+  for (let i = 220; i < bars.length - holdDays - 2; i++) {
+    const context = historicalContextAtIndex(barsBySymbol, i);
+    const slice = context[symbol] || bars.slice(0, i + 1);
+    if (slice.length < 220) continue;
 
-    const ema20v = ema(closes, 20);
-    const ema50v = ema(closes, 50);
-    if (!ema20v || !ema50v) continue;
-    const trendBull = close > ema20v && close > ema50v;
-    if (!trendBull || ema20v <= ema50v) { i += 2; continue; }
-
-    const sma200 = closes.length >= 200 ? sma(closes, 200) : null;
-    if (sma200 && close < sma200) { i += 2; continue; }
-
-    const rsi14  = rsi(closes, 14);
-    if (!rsi14 || rsi14 < 45 || rsi14 > 76) continue;
-
-    const atr14   = atr(slice, 14);
-    const adxVal  = adx(slice, 14) || 0;
-    const macdData = macd(closes);
-    if (ema20v && close > ema20v * 1.09) continue;
-
-    let score = 0;
-    if (close > ema20v) score += 14;
-    if (close > ema50v) score += 13;
-    if (sma200 && close > sma200) score += 12;
-    if (ema20v > ema50v) score += 10;
-    if (macdData?.bullish) score += 10;
-    if (macdData?.crossing) score += 5;
-    if (adxVal > 25) score += 8; else if (adxVal > 18) score += 4;
-    if (rsi14 >= 50 && rsi14 <= 68) score += 8; else if (rsi14 > 68 && rsi14 <= 74) score += 3;
-
-    const volumes = slice.map(b => b.volume || 0);
-    const avgVol  = sma(volumes, 20) || 1;
-    const volRatio = slice.at(-1).volume / avgVol;
-    if (volRatio >= 1.3) score += 8; else if (volRatio >= 1.1) score += 3;
-
-    if (spyCloses.length > 22) {
-      const spySlice = spyCloses.slice(0, i + 1);
-      const spyMove  = spySlice.length > 22 ? ((spySlice.at(-1) - spySlice[spySlice.length - 22]) / spySlice[spySlice.length - 22]) * 100 : 0;
-      const stockMove = closes.length > 22 ? ((close - closes[closes.length - 22]) / closes[closes.length - 22]) * 100 : 0;
-      if (stockMove > spyMove + 2) score += 10;
-      else if (stockMove > spyMove) score += 5;
-    }
-
-    if (etfBars.length > 50) {
-      const etfSlice  = etfBars.slice(0, i + 1);
-      const etfCloses = etfSlice.map(b => b.close);
-      const etfEma20  = ema(etfCloses, 20);
-      const etfEma50  = ema(etfCloses, 50);
-      if (etfEma20 && etfEma50 && etfCloses.at(-1) > etfEma20 && etfEma20 > etfEma50) score += 10;
-      else if (etfEma20 && etfCloses.at(-1) < etfEma20) score -= 12;
-    }
-
-    const recent20 = slice.slice(-20);
-    const high20   = Math.max(...recent20.map(b => b.high));
-    const setupType = classifySetup(close, high20, ema20v, ema50v, macdData, adxVal);
-    if (setupType === "Breakout") score += 7;
-    if (setupType === "Momentum") score += 6;
-    if (setupType === "EMA Bounce") score += 5;
-
-    // CRITICAL FIX: use historical regime — no bullish assumption
     const regimeInfo = getCachedRegime(i);
-    if (regimeInfo.regime === "BULLISH") {
-      score += 6;
-    } else if (regimeInfo.regime === "NEUTRAL") {
-      score -= 5;
-    } else if (regimeInfo.regime === "BEARISH") {
-      i += 2; continue; // skip longs in bearish regime
+    if (regimeInfo.regime === "BEARISH") {
+      i += 2;
+      continue;
     }
 
-    score = Math.max(1, Math.min(99, Math.round(score)));
-    if (score < minConf) continue;
-    if (adxVal > 0 && adxVal < 20) continue;
+    const backtestSettings = {
+      ...options,
+      minConfidence: minConf,
+      minRiskReward: minRR,
+      requireHistoricalEdge: false,
+      minHistoricalTrades: 0,
+      minHistoricalExpectancyR: -999,
+      minHistoricalProfitFactor: 0,
+      edgeWeight: Number(options.backtestEdgeWeight ?? 0),
+      blockUnknownEarnings: false,
+      earningsBlockDays: Number(options.earningsBlockDays || 5)
+    };
 
-    const low20    = Math.min(...recent20.map(b => b.low));
-    const safeAtr  = Number.isFinite(atr14) && atr14 > 0 ? atr14 : close * 0.025;
-    const stop     = Math.max(close - safeAtr * 1.2, low20 * 0.988);
-    const risk     = Math.max(0.001, close - stop);
-    if (risk <= 0 || risk > close * 0.12) continue;
+    let signal;
+    try {
+      signal = buildSignal(
+        symbol,
+        slice,
+        spyMove21At(context.SPY || []),
+        regimeInfo.regime,
+        backtestSettings,
+        {},
+        context,
+        {},
+        {},
+        {}
+      );
+    } catch {
+      continue;
+    }
 
-    const target = close + risk * 2.0;
-    const rrNum  = (target - close) / risk;
-    if (rrNum < minRR) continue;
+    if (!signal || signal.safety !== "TRADE_READY") continue;
+    if (Number(signal.confidence || 0) < minConf) continue;
+    if (Number(signal.rrNumber || 0) < minRR) continue;
 
     const nextBar = bars[i + 1];
-    if (!nextBar) continue;
-    const entryPrice = applyCosts(nextBar.open || nextBar.close, "buy", settings);
-    const entryRisk  = Math.max(entryPrice * 0.005, risk);
-    const entryStop  = entryPrice - entryRisk;
-    const entryTarget = entryPrice + entryRisk * 2.0;
+    if (!nextBar || !shouldCount(nextBar.date)) continue;
 
-    let exit = null, exitReason = "Timed exit";
+    const rawEntry = Number(nextBar.open || nextBar.close);
+    const entryPrice = applyCosts(rawEntry, "buy", costs);
+    const entryShift = entryPrice - Number(signal.entry);
+    const entryStop = Math.max(0.01, Number(signal.stop) + entryShift);
+    const risk = Math.max(entryPrice * 0.005, entryPrice - entryStop);
+    if (!Number.isFinite(risk) || risk <= 0 || risk > entryPrice * 0.12) continue;
+
+    const target1 = Number(signal.target1) + entryShift;
+    const target2 = Number(signal.target2) + entryShift;
+    const entryTarget = Number.isFinite(target1) && target1 > entryPrice ? target1 : entryPrice + risk * 2;
+    const stretchTarget = Number.isFinite(target2) && target2 > entryPrice ? target2 : entryPrice + risk * 3;
+
+    let exit = null;
+    let exitReason = "Timed exit";
     let exitDate = bars[Math.min(i + 1 + holdDays, bars.length - 1)].date;
+    let bestHigh = entryPrice;
 
     for (let j = i + 2; j <= i + 1 + holdDays && j < bars.length; j++) {
       const bar = bars[j];
+      bestHigh = Math.max(bestHigh, Number(bar.high || bestHigh));
+
+      // Conservative sequencing: if stop and target both hit in the same bar, count stop first.
       if (bar.low <= entryStop) {
-        exit = applyCosts(entryStop, "sell", settings);
-        exitReason = "Stop hit"; exitDate = bar.date; break;
+        exit = applyCosts(entryStop, "sell", costs);
+        exitReason = "Stop hit";
+        exitDate = bar.date;
+        break;
+      }
+      if (bar.high >= stretchTarget) {
+        exit = applyCosts(stretchTarget, "sell", costs);
+        exitReason = "Target 2 hit";
+        exitDate = bar.date;
+        break;
       }
       if (bar.high >= entryTarget) {
-        exit = applyCosts(entryTarget, "sell", settings);
-        exitReason = "Target hit"; exitDate = bar.date; break;
+        exit = applyCosts(entryTarget, "sell", costs);
+        exitReason = "Target 1 hit";
+        exitDate = bar.date;
+        break;
+      }
+
+      // Time stop: if the trade has not made progress after a few bars, exit flat/weak.
+      if (timeStopDays > 0 && j >= i + 1 + timeStopDays) {
+        const progressR = (bestHigh - entryPrice) / risk;
+        if (progressR < 0.5 && Number(bar.close) <= entryPrice) {
+          exit = applyCosts(Number(bar.close), "sell", costs);
+          exitReason = "Time stop — no progress";
+          exitDate = bar.date;
+          break;
+        }
       }
     }
 
     if (exit === null) {
-      const eb = bars[Math.min(i + 1 + holdDays, bars.length - 1)];
-      exit = applyCosts(eb.close, "sell", settings);
-      exitDate = eb.date;
+      const exitBar = bars[Math.min(i + 1 + holdDays, bars.length - 1)];
+      exit = applyCosts(Number(exitBar.close), "sell", costs);
+      exitDate = exitBar.date;
     }
 
-    const pnlR = Number(((exit - entryPrice) / entryRisk).toFixed(2));
+    const pnlR = Number(((exit - entryPrice) / risk).toFixed(2));
     if (!Number.isFinite(pnlR)) continue;
 
-    const trade = {
-      symbol, setupType,
-      entryDate: nextBar.date, exitDate,
-      entry: Number(entryPrice.toFixed(4)), exit: Number(exit.toFixed(4)),
-      stop: Number(entryStop.toFixed(4)), target: Number(entryTarget.toFixed(4)),
-      confidence: score, pnlR, exitReason,
+    trades.push({
+      symbol,
+      setupType: signal.setup,
+      entryDate: nextBar.date,
+      exitDate,
+      entry: Number(entryPrice.toFixed(4)),
+      exit: Number(exit.toFixed(4)),
+      stop: Number(entryStop.toFixed(4)),
+      target: Number(entryTarget.toFixed(4)),
+      confidence: signal.confidence,
+      grade: signal.grade || null,
+      pnlR,
+      exitReason,
       marketRegime: regimeInfo.regime,
       marketBreadth: regimeInfo.breadth,
-      marketVolatility: regimeInfo.volatility
-    };
+      marketVolatility: regimeInfo.volatility,
+      rsPercentile: signal.rs?.rsPercentile || null
+    });
 
-    // Walk-forward date filter — only count trades in test window
-    if (!shouldCount(trade.entryDate)) {
-      i += Math.max(3, Math.floor(holdDays / 2));
-      continue;
-    }
-
-    trades.push(trade);
     i += Math.max(3, Math.floor(holdDays / 2));
   }
 
   return { symbol, trades, summary: summarizeTrades(trades), setupStats: summarizeBySetup(trades) };
+}
+
+function simulatePortfolioTrades(trades, options = {}) {
+  const maxOpen = Number(options.maxOpenPositions || 4);
+  const maxDailyEntries = Number(options.maxDailyEntries || 2);
+  const maxSameSectorOpen = Number(options.maxSameSectorOpen || 2);
+  const sorted = [...trades].sort((a, b) => String(a.entryDate).localeCompare(String(b.entryDate)) || Number(b.confidence || 0) - Number(a.confidence || 0));
+  const open = [];
+  const accepted = [];
+  const rejected = [];
+  const dailyEntries = {};
+
+  for (const trade of sorted) {
+    while (open.length && String(open[0].exitDate) <= String(trade.entryDate)) open.shift();
+    open.sort((a, b) => String(a.exitDate).localeCompare(String(b.exitDate)));
+
+    const day = trade.entryDate;
+    const sector = sectorOf(trade.symbol);
+    const sameSectorOpen = open.filter(row => sectorOf(row.symbol) === sector).length;
+    const reasons = [];
+    if (open.length >= maxOpen) reasons.push("Max open positions reached");
+    if ((dailyEntries[day] || 0) >= maxDailyEntries) reasons.push("Max daily entries reached");
+    if (sameSectorOpen >= maxSameSectorOpen) reasons.push(`Max same-sector positions reached for ${sector}`);
+
+    if (reasons.length) {
+      rejected.push({ ...trade, rejectedReasons: reasons });
+      continue;
+    }
+
+    accepted.push(trade);
+    open.push(trade);
+    dailyEntries[day] = (dailyEntries[day] || 0) + 1;
+  }
+
+  return { trades: accepted, rejected };
 }
 
 // ─── Portfolio Backtest ───────────────────────────────────────────────────────
@@ -347,7 +380,8 @@ function runPortfolioBacktest(barsBySymbol, options = {}) {
     .filter(([s]) => !excluded.has(s))
     .map(([s, b]) => runSignalBacktest(s, b, options, barsBySymbol, sharedRegimeCache));
 
-  const allTrades = results.flatMap(r => r.trades);
+  const rawTrades = results.flatMap(r => r.trades);
+  const portfolio = simulatePortfolioTrades(rawTrades, options);
   const edges = {};
   for (const r of results) {
     edges[r.symbol] = {
@@ -357,10 +391,15 @@ function runPortfolioBacktest(barsBySymbol, options = {}) {
   }
   return {
     options, createdAt: new Date().toISOString(),
-    lookback: options.lookback || "max daily — historical regime applied",
-    method: "signal backtest + next-bar entry + historical regime",
-    perSymbol: results, summary: summarizeTrades(allTrades),
-    trades: allTrades.slice(-1000), edges
+    lookback: options.lookback || "max daily — live signal engine, historical regime applied",
+    method: "scanner-equivalent signal backtest + next-bar entry + portfolio constraints",
+    perSymbol: results,
+    rawSummary: summarizeTrades(rawTrades),
+    summary: summarizeTrades(portfolio.trades),
+    portfolioRejected: portfolio.rejected.slice(-500),
+    trades: portfolio.trades.slice(-1000),
+    rawTrades: rawTrades.slice(-1000),
+    edges
   };
 }
 
@@ -402,7 +441,11 @@ function optimize(barsBySymbol, baseOptions = {}) {
 }
 
 module.exports = {
-  runSignalBacktest, runPortfolioBacktest, optimize,
-  summarizeTrades, summarizeBySetup,
+  runSignalBacktest,
+  runPortfolioBacktest,
+  optimize,
+  summarizeTrades,
+  summarizeBySetup,
+  simulatePortfolioTrades,
   historicalRegimeAtIndex
 };

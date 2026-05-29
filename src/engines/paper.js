@@ -59,6 +59,8 @@ function enterPaper(db, signal, source = "manual", barsBySymbol = {}) {
     shares:    initShares,
     originalShares: initShares,
     entry:     actualEntry,
+    avgEntry:  actualEntry,
+    totalCost: Number((actualEntry * initShares).toFixed(4)),
     rawEntry:  signal.entry,
     stop:      adjustedStop,
     originalStop: signal.stop,
@@ -107,19 +109,21 @@ function scalePyramid(db, position, addShares, price, reason) {
   const cost  = entry * addShares + Number(db.settings.commissionPerTrade || 0) / 2;
   if (cost > db.paper.cash) return null;
 
-  position.shares   += addShares;
-  db.paper.cash     -= cost;
+  const priorShares = Number(position.shares || 0);
+  const priorCost = Number.isFinite(Number(position.totalCost))
+    ? Number(position.totalCost)
+    : Number(position.avgEntry || position.entry) * priorShares;
 
-  // Recalculate average entry price
-  const totalCost = position.entry * position.originalShares + entry * addShares;
-  position.avgEntry = round(totalCost / position.shares);
+  position.shares += addShares;
+  db.paper.cash -= cost;
+  position.totalCost = Number((priorCost + entry * addShares).toFixed(4));
+  position.avgEntry = round(position.totalCost / position.shares, 4);
 
   addAlert(db, "PYRAMID_ADD", position.symbol,
     `${position.symbol} pyramid add — ${reason}`, { addShares, price: entry, avgEntry: position.avgEntry });
   addJournal(db, "PYRAMID_ADD", position.symbol,
     `${position.symbol} added ${addShares} shares at ${money(entry)} — ${reason}. Total: ${position.shares} shares, avg entry ${money(position.avgEntry)}`,
     { addShares, newTotal: position.shares, avgEntry: position.avgEntry });
-
   return { ok: true, addShares, avgEntry: position.avgEntry };
 }
 
@@ -162,9 +166,10 @@ function partialExitPaper(db, position, exitPrice, reason) {
   const halfShares = Math.floor(position.shares / 2);
   if (halfShares < 1) return null;
 
+  const effectiveEntry = Number(position.avgEntry || position.entry);
   const adjustedExit = applyCosts(Number(exitPrice), "sell", db.settings);
   const proceeds = adjustedExit * halfShares - Number(db.settings.commissionPerTrade || 0) / 2;
-  const cost = position.entry * halfShares;
+  const cost = effectiveEntry * halfShares;
   const pnl  = proceeds - cost;
 
   const partial = {
@@ -179,13 +184,14 @@ function partialExitPaper(db, position, exitPrice, reason) {
     isPartial: true
   };
 
-  position.shares         -= halfShares;
-  position.stop            = position.entry;
-  position.trailingStop    = position.entry;
+  position.shares -= halfShares;
+  position.totalCost = Number(Math.max(0, Number(position.totalCost || effectiveEntry * (position.shares + halfShares)) - cost).toFixed(4));
+  position.avgEntry = position.shares > 0 ? round(position.totalCost / position.shares, 4) : effectiveEntry;
+  position.stop = effectiveEntry;
+  position.trailingStop = effectiveEntry;
   position.partialExitDone = true;
   position.partialExitPrice = adjustedExit;
-  position.partialExitPnl  = pnl;
-  // Once T1 hit, disable remaining pyramid adds
+  position.partialExitPnl = pnl;
   position.pyramidEntry2Done = true;
   position.pyramidEntry3Done = true;
   position.pyramidPhase = "COMPLETE";
@@ -195,9 +201,8 @@ function partialExitPaper(db, position, exitPrice, reason) {
   addAlert(db, "PARTIAL_EXIT", position.symbol,
     `${position.symbol} partial exit at T1 — stop moved to breakeven`, partial);
   addJournal(db, "PARTIAL_EXIT", position.symbol,
-    `${position.symbol} sold half at ${money(adjustedExit)} — stop to breakeven ${money(position.entry)}. P/L: ${money(pnl)}`,
-    { partial, remainingShares: position.shares, newStop: position.entry });
-
+    `${position.symbol} sold half at ${money(adjustedExit)} — stop to breakeven ${money(effectiveEntry)}. P/L: ${money(pnl)}`,
+    { partial, remainingShares: position.shares, newStop: effectiveEntry });
   return { ok: true, partial, remainingShares: position.shares };
 }
 
@@ -219,7 +224,8 @@ function updateOpenPositions(db, signals) {
     }
 
     // ── Trailing stop update ──
-    if (position.trailingAtr && price > position.entry) {
+    const effectiveEntryForTrail = position.avgEntry || position.entry;
+    if (position.trailingAtr && price > effectiveEntryForTrail) {
       const newTrailing = round(price - position.trailingAtr * 1.5);
       if (newTrailing > (position.trailingStop || position.stop)) {
         position.trailingStop = newTrailing;
@@ -245,7 +251,6 @@ function updateOpenPositions(db, signals) {
             : `Price pulled back to EMA20 ($${round(ema20)}) — adding 25%`;
           scalePyramid(db, position, position.pyramidAddShares1, price, reason);
           position.pyramidEntry2Done = true;
-          position.originalShares   += position.pyramidAddShares1;
           position.pyramidPhase      = "WAITING_NEW_HIGH";
         }
       }
@@ -254,8 +259,9 @@ function updateOpenPositions(db, signals) {
       if (!position.pyramidEntry3Done && position.pyramidAddShares2 > 0 &&
           position.pyramidPhase === "WAITING_NEW_HIGH") {
         // New high = price exceeds entry by at least 1.5% AND is the highest since entry
-        const isNewHigh = price >= position.entry * 1.015 &&
-                          price >= (position.highSinceEntry || position.entry) * 0.998;
+        const provenEntry = position.avgEntry || position.entry;
+        const isNewHigh = price >= provenEntry * 1.015 &&
+                          price >= (position.highSinceEntry || provenEntry) * 0.998;
         if (isNewHigh && position.pyramidEntry2Done) {
           scalePyramid(db, position, position.pyramidAddShares2, price,
             `Price at new high ($${round(price)}) — trade proven, adding final 25%`);
@@ -324,4 +330,4 @@ function paperStats(db) {
   };
 }
 
-module.exports = { enterPaper, exitPaper, updateOpenPositions, paperStats };
+module.exports = { enterPaper, exitPaper, updateOpenPositions, paperStats, scalePyramid };

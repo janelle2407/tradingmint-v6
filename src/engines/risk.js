@@ -1,5 +1,5 @@
 function applyCosts(price,side,settings){const slippage=Number(settings.slippagePct||0)/100,spread=Number(settings.spreadPct||0)/100;if(side==="buy")return price*(1+slippage+spread/2);if(side==="sell")return price*(1-slippage-spread/2);return price;}
-function accountEquity(account){return account.cash+account.open.reduce((s,p)=>s+Number(p.lastPrice||p.entry)*Number(p.shares),0);}
+function accountEquity(account){return account.cash+account.open.reduce((s,p)=>s+Number(p.lastPrice||p.avgEntry||p.entry)*Number(p.shares),0);}
 function dailyPnl(account){const today=new Date().toISOString().slice(0,10);return account.closed.filter(p=>String(p.exitTime||"").startsWith(today)).reduce((s,p)=>s+Number(p.pnl||0),0);}
 function riskLockout(account,settings,stats={}){const starting=Number(settings.startingCash||5000),dailyLoss=dailyPnl(account),dailyLossPct=starting?Math.abs(Math.min(0,dailyLoss))/starting*100:0;if(dailyLossPct>=Number(settings.maxDailyLossPct||3))return{locked:true,reason:`Daily loss lockout hit: ${dailyLossPct.toFixed(2)}%.`};if(Number(stats.maxDrawdown||0)>=Number(settings.maxDrawdownPct||10))return{locked:true,reason:`Max drawdown lockout hit: ${stats.maxDrawdown}%.`};return{locked:false,reason:""};}
 function positionSize(account,signal,settings){
@@ -7,10 +7,13 @@ function positionSize(account,signal,settings){
   const entryCost = applyCosts(signal.entry, "buy", settings);
   const stopDist = Math.max(0.01, signal.entry - signal.stop);
 
-  // ATR-based sizing: risk exactly 1% of equity per trade (professional standard)
-  // Shares = (Equity × riskPct) / stopDistance
+  // ATR-based sizing: risk a fixed percent of equity, then throttle by market regime.
+  // Example defaults: BULLISH 100%, NEUTRAL 50%, BEARISH 0%.
   const riskPct = Number(settings.riskPerTradePct || 1) / 100;
-  const riskDollars = equity * riskPct;
+  const multipliers = settings.regimeRiskMultipliers || {};
+  const regime = String(signal.marketRegime || signal.market || "BULLISH").toUpperCase();
+  const riskMultiplier = Number.isFinite(Number(multipliers[regime])) ? Number(multipliers[regime]) : 1;
+  const riskDollars = equity * riskPct * Math.max(0, riskMultiplier);
   const atrShares = Math.floor(riskDollars / stopDist);
 
   // Also cap by max trade % of account
@@ -29,6 +32,12 @@ function canEnter(account, signal, settings, stats={}) {
   if (signal && signal.safety !== "TRADE_READY") reasons.push("Signal is not TRADE_READY.");
   if (signal && Number(signal.confidence) < Number(settings.minConfidence)) reasons.push("Confidence below minimum.");
   if (signal && Number(signal.rrNumber) < Number(settings.minRiskReward)) reasons.push("Risk/reward below minimum.");
+  if (signal) {
+    const multipliers = settings.regimeRiskMultipliers || {};
+    const regime = String(signal.marketRegime || signal.market || "BULLISH").toUpperCase();
+    const riskMultiplier = Number.isFinite(Number(multipliers[regime])) ? Number(multipliers[regime]) : 1;
+    if (riskMultiplier <= 0) reasons.push(`Market regime ${regime} blocks new long entries.`);
+  }
   if (signal && settings.requireHistoricalEdge && (!signal.historicalStats || Number(signal.historicalStats.trades||0) < Number(settings.minHistoricalTrades))) reasons.push("Historical sample too small.");
   if (account.open.length >= Number(settings.maxOpenPositions)) reasons.push("Max open positions reached.");
   if (signal && account.open.some(pos => pos.symbol === signal.symbol)) reasons.push("Position already open for symbol.");

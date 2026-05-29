@@ -1,12 +1,13 @@
 {
   "name": "tradingmint-pro",
-  "version": "6.0.0",
-  "description": "TradingMint PRO v6.0 — MACD, ADX, Bollinger Bands, tighter stops, beginner-friendly UI, improved accuracy.",
+  "version": "7.4.0",
+  "description": "TradingMint PRO v7.4 \u2014 US stock swing-trader scanner with scanner-equivalent backtesting, intraday RVOL, safer earnings defaults, portfolio constraints, and paper-only execution.",
   "main": "src/server.js",
   "type": "commonjs",
   "scripts": {
     "start": "node src/server.js",
-    "test": "node tests/runTests.js"
+    "test": "node tests/runTests.js",
+    "check": "node --check src/server.js && node --check src/engines/scanner.js && node --check src/engines/backtest.js && node --check src/engines/paper.js && node --check src/data/marketData.js && node tests/runTests.js"
   },
   "engines": {
     "node": ">=18"

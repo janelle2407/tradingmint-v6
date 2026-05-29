@@ -8,8 +8,26 @@ const DEFAULT_SYMBOLS = [
   "WMT", "HD", "MA", "V", "BAC", "XOM", "CVX", "CAT", "DE", "GE",
   "LRCX", "KLAC", "AMAT", "INTC", "MRVL", "ARM", "NET", "DDOG", "ZS",
   "MELI", "ABNB", "DASH", "RBLX", "ROKU", "SQ", "PYPL", "SOFI",
-  "XLE", "XLK", "XLF", "XLV", "XLY", "XLI", "XLP", "XLU", "XLB", "XLRE"
+  "ANET", "APP", "VRT", "DELL", "TSM", "ASML", "ON", "MCHP", "TXN",
+  "TTD", "MDB", "TEAM", "OKTA", "DUOL", "AXON", "CAVA", "ELF", "CELH", "WING",
+  "FSLR", "ENPH", "NVO", "ISRG", "VRTX", "REGN", "SCHW", "GS", "MS", "KKR",
+  "XLE", "XLK", "XLF", "XLV", "XLY", "XLI", "XLP", "XLU", "XLB", "XLRE",
+  "SMH", "SOXX", "IGV", "CIBR", "IHAK", "XBI", "IBB", "KRE", "KBE", "XRT", "SKYY"
 ];
+
+function parseSymbolList(value) {
+  return String(value || "")
+    .split(/[\s,]+/)
+    .map(s => s.trim().toUpperCase())
+    .filter(Boolean);
+}
+
+function getConfiguredSymbols() {
+  const replacement = parseSymbolList(process.env.STOCK_SYMBOLS);
+  const extras = parseSymbolList(process.env.EXTRA_SYMBOLS);
+  const base = replacement.length ? replacement : DEFAULT_SYMBOLS;
+  return [...new Set([...base, ...extras])];
+}
 
 const RANGE_FALLBACKS = ["max", "10y", "5y", "3y"];
 
@@ -126,7 +144,7 @@ async function yahooBars(symbol, range = "max", interval = "1d") {
 }
 
 // Fetch symbols in parallel batches — much faster than sequential
-async function fetchUniverse(symbols = DEFAULT_SYMBOLS, limit = 70, range = "max") {
+async function fetchUniverse(symbols = getConfiguredSymbols(), limit = 120, range = "max") {
   const unique = [...new Set(symbols.map(s => String(s).trim().toUpperCase()).filter(Boolean))].slice(0, limit);
   const barsBySymbol = {};
   const metaBySymbol = {};
@@ -275,6 +293,27 @@ const YAHOO_HEADERS_FULL = {
   "Referer": "https://finance.yahoo.com/"
 };
 
+function parseDateValue(value) {
+  const parsed = Date.parse(value || "");
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function sortByDateAsc(rows) {
+  return [...rows].sort((a, b) => parseDateValue(a.date) - parseDateValue(b.date));
+}
+
+function calcYoYGrowth(rows, valueKey) {
+  const sorted = sortByDateAsc(rows).filter(row => Number.isFinite(Number(row[valueKey])));
+  const growth = [];
+  for (let i = 4; i < sorted.length; i++) {
+    const current = Number(sorted[i][valueKey]);
+    const priorYear = Number(sorted[i - 4][valueKey]);
+    if (!Number.isFinite(current) || !Number.isFinite(priorYear) || priorYear === 0) continue;
+    growth.push({ date: sorted[i].date, value: ((current - priorYear) / Math.abs(priorYear)) * 100 });
+  }
+  return growth;
+}
+
 async function fetchFundamentals(symbol) {
   const clean = String(symbol || "").trim().toUpperCase();
   const cached = fundamentalCache.get(clean);
@@ -292,86 +331,63 @@ async function fetchFundamentals(symbol) {
       const result = payload?.quoteSummary?.result?.[0];
       if (!result) throw new Error("No data");
 
-      // ── Earnings History ──
-      const epsHistory = (result.earningsHistory?.history || [])
-        .slice(-4)
+      // Use true year-over-year growth: latest quarter vs same quarter last year.
+      // Quarter-over-quarter growth can be distorted by seasonality.
+      const epsHistory = sortByDateAsc((result.earningsHistory?.history || [])
         .map(q => ({
           date: q.quarter?.fmt || null,
           actual: Number(q.epsActual?.raw ?? null),
           estimate: Number(q.epsEstimate?.raw ?? null),
           surprise: Number(q.surprisePercent?.raw ?? null)
         }))
-        .filter(q => Number.isFinite(q.actual));
+        .filter(q => Number.isFinite(q.actual)));
 
-      // ── EPS Year-over-Year Growth per quarter ──
-      const epsGrowth = epsHistory.map((q, i) => {
-        if (i < 1 || !Number.isFinite(epsHistory[i-1]?.actual) || epsHistory[i-1].actual === 0) return null;
-        return ((q.actual - epsHistory[i-1].actual) / Math.abs(epsHistory[i-1].actual)) * 100;
-      }).filter(v => Number.isFinite(v));
-
-      // ── EPS Acceleration ──
-      // Is the most recent quarter's growth HIGHER than the prior quarter?
-      const epsAccelerating = epsGrowth.length >= 2
-        ? epsGrowth.at(-1) > epsGrowth.at(-2)
-        : null;
+      const epsGrowthRows = calcYoYGrowth(epsHistory, "actual");
+      const epsGrowth = epsGrowthRows.map(row => row.value).filter(Number.isFinite);
       const latestEpsGrowth = epsGrowth.length ? epsGrowth.at(-1) : null;
+      const epsAccelerating = epsGrowth.length >= 2 ? epsGrowth.at(-1) > epsGrowth.at(-2) : null;
 
-      // ── Revenue (quarterly) ──
-      const revHistory = (result.incomeStatementHistoryQuarterly?.incomeStatementHistory || [])
-        .slice(-4)
+      const revHistory = sortByDateAsc((result.incomeStatementHistoryQuarterly?.incomeStatementHistory || [])
         .map(q => ({
           date: q.endDate?.fmt || null,
           revenue: Number(q.totalRevenue?.raw ?? null)
         }))
-        .filter(q => Number.isFinite(q.revenue) && q.revenue > 0);
+        .filter(q => Number.isFinite(q.revenue) && q.revenue > 0));
 
-      const revGrowthArr = revHistory.map((q, i) => {
-        if (i < 1 || !revHistory[i-1]?.revenue) return null;
-        return ((q.revenue - revHistory[i-1].revenue) / revHistory[i-1].revenue) * 100;
-      }).filter(v => Number.isFinite(v));
-
+      const revGrowthRows = calcYoYGrowth(revHistory, "revenue");
+      const revGrowthArr = revGrowthRows.map(row => row.value).filter(Number.isFinite);
       const latestRevGrowth = revGrowthArr.length ? revGrowthArr.at(-1) : null;
-      const revAccelerating = revGrowthArr.length >= 2
-        ? revGrowthArr.at(-1) > revGrowthArr.at(-2)
-        : null;
+      const revAccelerating = revGrowthArr.length >= 2 ? revGrowthArr.at(-1) > revGrowthArr.at(-2) : null;
 
-      // ── Earnings Surprise ──
       const latestSurprise = epsHistory.length ? epsHistory.at(-1).surprise : null;
 
-      // ── Institutional Ownership ──
       const instOwnership = result.institutionOwnership?.ownershipList || [];
       const recentInst = instOwnership.slice(0, 10);
       const instPctHeld = Number(result.defaultKeyStatistics?.heldPercentInstitutions?.raw ?? null) * 100;
-      // Net change: sum of recent holder changes
-      const instNetChange = recentInst.reduce((sum, h) => {
-        const chg = Number(h.pctChange?.raw ?? 0);
-        return sum + chg;
-      }, 0);
+      const instNetChange = recentInst.reduce((sum, h) => sum + Number(h.pctChange?.raw ?? 0), 0);
       const instIncreasing = instNetChange > 0;
       const instHolderCount = instOwnership.length;
 
       const data = {
         symbol: clean,
         fetchedAt: new Date().toISOString(),
-        // EPS
-        epsHistory,
+        epsHistory: epsHistory.slice(-8),
         latestEpsGrowth: latestEpsGrowth != null ? round(latestEpsGrowth, 1) : null,
         epsAccelerating,
         epsGrowthArr: epsGrowth.map(v => round(v, 1)),
-        // Revenue
+        epsGrowthRows: epsGrowthRows.map(row => ({ date: row.date, value: round(row.value, 1) })),
+        revHistory: revHistory.slice(-8),
         latestRevGrowth: latestRevGrowth != null ? round(latestRevGrowth, 1) : null,
         revAccelerating,
-        // Surprise
+        revGrowthArr: revGrowthArr.map(v => round(v, 1)),
+        revGrowthRows: revGrowthRows.map(row => ({ date: row.date, value: round(row.value, 1) })),
         latestSurprise: latestSurprise != null ? round(latestSurprise, 1) : null,
-        // Institutional
         instPctHeld: Number.isFinite(instPctHeld) ? round(instPctHeld, 1) : null,
         instIncreasing,
         instNetChange: round(instNetChange, 2),
         instHolderCount,
-        // Overall quality flag
         fundamentalsStrong: (
-          (latestEpsGrowth != null && latestEpsGrowth >= 25) ||
-          (epsAccelerating === true)
+          (latestEpsGrowth != null && latestEpsGrowth >= 25) || epsAccelerating === true
         ) && (
           latestRevGrowth != null && latestRevGrowth >= 10
         )
@@ -383,9 +399,18 @@ async function fetchFundamentals(symbol) {
       clearTimeout(timeout);
     }
   } catch {
-    const empty = { symbol: clean, fetchedAt: new Date().toISOString(), error: true,
-      latestEpsGrowth: null, epsAccelerating: null, latestRevGrowth: null,
-      instPctHeld: null, instIncreasing: null, fundamentalsStrong: null };
+    const empty = {
+      symbol: clean,
+      fetchedAt: new Date().toISOString(),
+      error: true,
+      latestEpsGrowth: null,
+      epsAccelerating: null,
+      latestRevGrowth: null,
+      revAccelerating: null,
+      instPctHeld: null,
+      instIncreasing: null,
+      fundamentalsStrong: null
+    };
     fundamentalCache.set(clean, { data: empty, time: Date.now() });
     return empty;
   }
@@ -393,7 +418,7 @@ async function fetchFundamentals(symbol) {
 
 async function fetchFundamentalsForUniverse(symbols) {
   const result = {};
-  const excluded = new Set(["SPY","QQQ","DIA","IWM","XLK","XLF","XLV","XLY","XLI","XLE","XLP","XLU","XLB","XLRE","VIX"]);
+  const excluded = new Set(["SPY","QQQ","DIA","IWM","XLK","XLF","XLV","XLY","XLI","XLE","XLP","XLU","XLB","XLRE","VIX","SMH","SOXX","IGV","CIBR","IHAK","XBI","IBB","KRE","KBE","XRT"]);
   const stocks = symbols.filter(s => !excluded.has(s));
   const BATCH = 5; // Small batches to avoid rate limiting
   for (let i = 0; i < stocks.length; i += BATCH) {
@@ -492,7 +517,7 @@ async function fetchIntradayRVOL(symbol) {
 }
 
 module.exports = {
-  DEFAULT_SYMBOLS, RANGE_FALLBACKS,
+  DEFAULT_SYMBOLS, RANGE_FALLBACKS, getConfiguredSymbols,
   yahooBars, yahooBarsWithFallback, fetchUniverse,
   round, percentMove, dataQualityScore,
   fetchEarningsCalendar, fetchEarningsDate,

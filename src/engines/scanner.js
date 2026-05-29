@@ -127,26 +127,50 @@ function atr(bars, period = 14) {
 }
 
 function adx(bars, period = 14) {
-  // Returns ADX value — measures trend strength regardless of direction
-  // ADX > 20 = trending, ADX > 25 = strong trend
-  if (!Array.isArray(bars) || bars.length < period * 2 + 2) return null;
-  const dmPlus = [], dmMinus = [], tr = [];
+  // Wilder-smoothed ADX. Measures trend strength regardless of direction.
+  // ADX > 20 = trending, ADX > 25 = strong trend.
+  if (!Array.isArray(bars) || bars.length < period * 2 + 1) return null;
+
+  const tr = [];
+  const plusDm = [];
+  const minusDm = [];
   for (let i = 1; i < bars.length; i++) {
-    const high = bars[i].high, low = bars[i].low;
-    const prevHigh = bars[i - 1].high, prevLow = bars[i - 1].low, prevClose = bars[i - 1].close;
-    dmPlus.push(high - prevHigh > prevLow - low ? Math.max(high - prevHigh, 0) : 0);
-    dmMinus.push(prevLow - low > high - prevHigh ? Math.max(prevLow - low, 0) : 0);
+    const high = Number(bars[i].high);
+    const low = Number(bars[i].low);
+    const prevHigh = Number(bars[i - 1].high);
+    const prevLow = Number(bars[i - 1].low);
+    const prevClose = Number(bars[i - 1].close);
+    if (![high, low, prevHigh, prevLow, prevClose].every(Number.isFinite)) continue;
+    const upMove = high - prevHigh;
+    const downMove = prevLow - low;
+    plusDm.push(upMove > downMove && upMove > 0 ? upMove : 0);
+    minusDm.push(downMove > upMove && downMove > 0 ? downMove : 0);
     tr.push(Math.max(high - low, Math.abs(high - prevClose), Math.abs(low - prevClose)));
   }
-  const smoothTr = sma(tr.slice(-period * 2), period);
-  const smoothDmPlus = sma(dmPlus.slice(-period * 2), period);
-  const smoothDmMinus = sma(dmMinus.slice(-period * 2), period);
-  if (!smoothTr || smoothTr === 0) return null;
-  const diPlus = (smoothDmPlus / smoothTr) * 100;
-  const diMinus = (smoothDmMinus / smoothTr) * 100;
-  const diSum = diPlus + diMinus;
-  if (diSum === 0) return null;
-  return Math.abs(diPlus - diMinus) / diSum * 100;
+  if (tr.length < period * 2) return null;
+
+  let trSmooth = tr.slice(0, period).reduce((s, v) => s + v, 0);
+  let plusSmooth = plusDm.slice(0, period).reduce((s, v) => s + v, 0);
+  let minusSmooth = minusDm.slice(0, period).reduce((s, v) => s + v, 0);
+  const dx = [];
+
+  for (let i = period; i < tr.length; i++) {
+    trSmooth = trSmooth - trSmooth / period + tr[i];
+    plusSmooth = plusSmooth - plusSmooth / period + plusDm[i];
+    minusSmooth = minusSmooth - minusSmooth / period + minusDm[i];
+    if (trSmooth <= 0) continue;
+    const plusDi = 100 * (plusSmooth / trSmooth);
+    const minusDi = 100 * (minusSmooth / trSmooth);
+    const sum = plusDi + minusDi;
+    if (sum > 0) dx.push(100 * Math.abs(plusDi - minusDi) / sum);
+  }
+
+  if (dx.length < period) return null;
+  let adxValue = dx.slice(0, period).reduce((s, v) => s + v, 0) / period;
+  for (let i = period; i < dx.length; i++) {
+    adxValue = ((adxValue * (period - 1)) + dx[i]) / period;
+  }
+  return adxValue;
 }
 
 function bollingerBands(closes, period = 20, stdDev = 2) {
@@ -164,10 +188,9 @@ function bollingerBands(closes, period = 20, stdDev = 2) {
   };
 }
 
-// ─── VWAP Calculation ────────────────────────────────────────────────────────
-// VWAP = Volume Weighted Average Price — most reliable intraday anchor
-// We calculate it from daily bars as a 20-day VWAP approximation
-// Rule: only long if price is above VWAP
+// ─── 20-Day Volume-Weighted Price ────────────────────────────────────────────
+// This uses daily bars as a swing-trading volume-weighted anchor.
+// It is not true intraday session VWAP, which requires intraday candles.
 
 function calcVWAP(bars, period = 20) {
   if (!Array.isArray(bars) || bars.length < period) return null;
@@ -527,13 +550,25 @@ function calcRelativeStrength(closes, spyCloses) {
 
 // Calculate RS percentile rank across all signals (call after building all signals)
 function addRsPercentiles(signals) {
-  const rs3mValues = signals.map(s => s.rs?.rs3m).filter(v => v != null).sort((a, b) => a - b);
-  for (const s of signals) {
-    if (s.rs?.rs3m != null && rs3mValues.length > 0) {
-      const rank = rs3mValues.filter(v => v <= s.rs.rs3m).length;
-      s.rs.rsPercentile = Math.round((rank / rs3mValues.length) * 100);
+  // Percentiles are across the scanned universe. Use STOCK_SYMBOLS/EXTRA_SYMBOLS
+  // to feed a broad list if you want this to behave closer to an IBD-style RS rank.
+  const assign = (key, outKey) => {
+    const values = signals
+      .map(s => s.rs?.[key])
+      .filter(Number.isFinite)
+      .sort((a, b) => a - b);
+    for (const s of signals) {
+      const value = s.rs?.[key];
+      if (Number.isFinite(value) && values.length) {
+        const rank = values.filter(v => v <= value).length;
+        s.rs[outKey] = Math.round((rank / values.length) * 100);
+      }
     }
-  }
+  };
+  assign("rs1m", "rsPercentile21");
+  assign("rs3m", "rsPercentile");
+  assign("rs6m", "rsPercentile126");
+  assign("rs12m", "rsPercentile252");
   return signals;
 }
 
@@ -559,11 +594,6 @@ function detectStage(bars) {
   // Price position relative to 30-week MA
   const aboveMa  = price > ma30w;
   const pctAbove = ((price - ma30w) / ma30w) * 100;
-
-  // RS trend — is relative strength line rising?
-  const rsRising = closes.length >= 10
-    ? closes.at(-1) / (closes.at(-1)) >= closes.at(-10) / (closes.at(-10))  // simplified
-    : null;
 
   let stage, label, reason;
 
@@ -592,60 +622,49 @@ function trendTemplate(bars) {
   if (!Array.isArray(bars) || bars.length < 100) {
     return { passes: false, score: 0, checks: [], reason: "Not enough data for trend template." };
   }
-  const closes = bars.map(b => b.close);
+  const closes = bars.map(b => b.close).filter(Number.isFinite);
   const price = closes.at(-1);
-
+  const sma50 = closes.length >= 50 ? sma(closes, 50) : null;
   const sma150 = closes.length >= 150 ? sma(closes, 150) : null;
   const sma200v = closes.length >= 200 ? sma(closes, 200) : null;
   const sma200_20ago = closes.length >= 220 ? sma(closes.slice(0, -20), 200) : null;
   const high52 = Math.max(...closes.slice(-252));
-  const low52  = Math.min(...closes.slice(-252));
-
+  const low52 = Math.min(...closes.slice(-252));
   const checks = [];
 
-  // 1. Price > 150-day MA
   checks.push({ name: "Price > 150-day MA", pass: sma150 ? price > sma150 : false,
     detail: sma150 ? `Price $${round(price)} vs 150-MA $${round(sma150)}` : "No data" });
-
-  // 2. Price > 200-day MA
   checks.push({ name: "Price > 200-day MA", pass: sma200v ? price > sma200v : false,
     detail: sma200v ? `Price $${round(price)} vs 200-MA $${round(sma200v)}` : "No data" });
-
-  // 3. 150-day MA > 200-day MA
+  checks.push({ name: "50-MA > 150-MA", pass: sma50 && sma150 ? sma50 > sma150 : false,
+    detail: sma50 && sma150 ? `50-MA $${round(sma50)} vs 150-MA $${round(sma150)}` : "No data" });
+  checks.push({ name: "50-MA > 200-MA", pass: sma50 && sma200v ? sma50 > sma200v : false,
+    detail: sma50 && sma200v ? `50-MA $${round(sma50)} vs 200-MA $${round(sma200v)}` : "No data" });
   checks.push({ name: "150-MA > 200-MA", pass: sma150 && sma200v ? sma150 > sma200v : false,
     detail: sma150 && sma200v ? `150-MA $${round(sma150)} vs 200-MA $${round(sma200v)}` : "No data" });
-
-  // 4. 200-day MA trending up (higher than 20 days ago)
   checks.push({ name: "200-MA trending up", pass: sma200v && sma200_20ago ? sma200v > sma200_20ago : false,
-    detail: sma200v && sma200_20ago ? `200-MA up ${round(((sma200v - sma200_20ago)/sma200_20ago)*100, 1)}% in 20 days` : "No data" });
+    detail: sma200v && sma200_20ago ? `200-MA up ${round(((sma200v - sma200_20ago) / sma200_20ago) * 100, 1)}% in 20 days` : "No data" });
 
-  // 5. Price at least 30% above 52-week low
   const aboveLow52Pct = low52 > 0 ? ((price - low52) / low52) * 100 : 0;
   checks.push({ name: "30%+ above 52-week low", pass: aboveLow52Pct >= 30,
     detail: `${round(aboveLow52Pct, 1)}% above 52-week low of $${round(low52)}` });
-
-  // 6. Price within 25% of 52-week high
   const belowHigh52Pct = high52 > 0 ? ((high52 - price) / high52) * 100 : 100;
   checks.push({ name: "Within 25% of 52-week high", pass: belowHigh52Pct <= 25,
     detail: `${round(belowHigh52Pct, 1)}% below 52-week high of $${round(high52)}` });
-
-  // 7. Price > 50-day MA (we use this as RS proxy)
-  const ema50v = ema(closes, 50);
-  checks.push({ name: "Price > 50-day MA", pass: ema50v ? price > ema50v : false,
-    detail: ema50v ? `Price $${round(price)} vs 50-MA $${round(ema50v)}` : "No data" });
+  checks.push({ name: "Price > 50-day MA", pass: sma50 ? price > sma50 : false,
+    detail: sma50 ? `Price $${round(price)} vs 50-MA $${round(sma50)}` : "No data" });
 
   const passed = checks.filter(c => c.pass).length;
-  const total  = checks.length;
+  const total = checks.length;
   const allPass = passed === total;
-
   return {
     passes: allPass,
     score: passed,
     total,
     checks,
     reason: allPass
-      ? `All ${total} Minervini trend template checks pass — this is a true market leader.`
-      : `${passed}/${total} trend template checks pass. Missing: ${checks.filter(c => !c.pass).map(c => c.name).join(", ")}.`
+      ? `All ${total} trend-template checks pass — this is behaving like a true market leader.`
+      : `${passed}/${total} trend-template checks pass. Missing: ${checks.filter(c => !c.pass).map(c => c.name).join(", ")}.`
   };
 }
 
@@ -817,70 +836,91 @@ function detectPocketPivot(bars) {
 
 function calcFibLevels(bars, lookback = 50) {
   if (!Array.isArray(bars) || bars.length < lookback) return null;
-
   const slice = bars.slice(-lookback);
-  const highs  = slice.map(b => b.high);
-  const lows   = slice.map(b => b.low);
+  const highs = slice.map(b => Number(b.high)).filter(Number.isFinite);
+  const lows = slice.map(b => Number(b.low)).filter(Number.isFinite);
+  if (!highs.length || !lows.length) return null;
   const swingHigh = Math.max(...highs);
-  const swingLow  = Math.min(...lows);
-  const range  = swingHigh - swingLow;
-
+  const swingLow = Math.min(...lows);
+  const range = swingHigh - swingLow;
   if (range <= 0) return null;
+  const price = Number(bars.at(-1).close);
 
-  const price = bars.at(-1).close;
-
-  // Standard Fibonacci retracement levels (from swing high down to swing low)
   const levels = {
-    r100:  round(swingHigh),                           // 100% = swing high (resistance)
-    r786:  round(swingHigh - range * 0.786),           // 78.6%
-    r618:  round(swingHigh - range * 0.618),           // 61.8% — golden pocket start
-    r500:  round(swingHigh - range * 0.500),           // 50%   — golden pocket mid
-    r382:  round(swingHigh - range * 0.382),           // 38.2%
-    r236:  round(swingHigh - range * 0.236),           // 23.6%
-    r0:    round(swingLow),                            // 0% = swing low (support)
+    r100: round(swingHigh),
+    r786: round(swingHigh - range * 0.786),
+    r618: round(swingHigh - range * 0.618),
+    r500: round(swingHigh - range * 0.500),
+    r382: round(swingHigh - range * 0.382),
+    r236: round(swingHigh - range * 0.236),
+    r0: round(swingLow),
     swingHigh: round(swingHigh),
-    swingLow:  round(swingLow),
+    swingLow: round(swingLow),
     range: round(range),
     lookback
   };
 
-  // Which level is price currently nearest to?
   const fibPrices = [levels.r786, levels.r618, levels.r500, levels.r382, levels.r236];
-  const fibNames  = ["78.6%", "61.8%", "50%", "38.2%", "23.6%"];
+  const fibNames = ["78.6%", "61.8%", "50%", "38.2%", "23.6%"];
   let nearestLevel = null, nearestName = null, nearestDist = Infinity;
   for (let i = 0; i < fibPrices.length; i++) {
     const dist = Math.abs(price - fibPrices[i]) / price;
     if (dist < nearestDist) {
       nearestDist = dist;
       nearestLevel = fibPrices[i];
-      nearestName  = fibNames[i];
+      nearestName = fibNames[i];
     }
   }
-
-  // Is price in the golden pocket (61.8%–50% retracement)? Best pullback entry zone
-  const inGoldenPocket = price >= levels.r500 && price <= levels.r618;
-  // Is price near any Fibonacci level (within 1.5%)?
+  const goldenPocketLow = Math.min(levels.r500, levels.r618);
+  const goldenPocketHigh = Math.max(levels.r500, levels.r618);
+  const inGoldenPocket = price >= goldenPocketLow && price <= goldenPocketHigh;
   const nearFibLevel = nearestDist < 0.015;
-  // Is price above the 61.8% level? (Still in upper range — bullish)
-  const aboveFib618  = price > levels.r618;
+  const aboveFib618 = price > levels.r618;
 
   return {
     ...levels,
     price: round(price),
     nearestLevel,
     nearestName,
-    nearestDist: round(nearestDist * 100, 2), // as percentage
+    nearestDist: round(nearestDist * 100, 2),
+    goldenPocketLow,
+    goldenPocketHigh,
     inGoldenPocket,
     nearFibLevel,
     aboveFib618,
-    // Retracement from swing high (how far has price pulled back?)
     retracementPct: round(((swingHigh - price) / range) * 100, 1)
   };
 }
 
+function nyDateString(date = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/New_York",
+    year: "numeric", month: "2-digit", day: "2-digit"
+  }).formatToParts(date);
+  const get = type => parts.find(part => part.type === type)?.value;
+  return `${get("year")}-${get("month")}-${get("day")}`;
+}
+
+function nyMarketProgress(date = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    hour: "2-digit", minute: "2-digit", weekday: "short", hour12: false
+  }).formatToParts(date);
+  const get = type => parts.find(part => part.type === type)?.value;
+  const days = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+  const day = days[get("weekday")] ?? 0;
+  const hour = parseInt(get("hour") || "0", 10) % 24;
+  const minute = parseInt(get("minute") || "0", 10);
+  const mins = hour * 60 + minute;
+  const open = 9 * 60 + 30;
+  const close = 16 * 60;
+  const isOpen = day >= 1 && day <= 5 && mins >= open && mins < close;
+  return { isOpen, dayPctDone: Math.max(0.01, Math.min(1, (mins - open) / (close - open))) };
+}
+
 // ─── Main Signal Builder ───────────────────────────────────────────────────
 
-function buildSignal(symbol, bars, spyMove21, marketBias, settings = {}, historicalEdges = {}, barsBySymbol = {}, earningsCalendar = {}, fundamentalsData = {}) {
+function buildSignal(symbol, bars, spyMove21, marketBias, settings = {}, historicalEdges = {}, barsBySymbol = {}, earningsCalendar = {}, fundamentalsData = {}, intradayRvolBySymbol = {}) {
   const closes = bars.map(b => b.close);
   const volumes = bars.map(b => b.volume || 0);
   const last = bars[bars.length - 1];
@@ -895,27 +935,21 @@ function buildSignal(symbol, bars, spyMove21, marketBias, settings = {}, histori
   const adxVal = adx(bars, 14);
   const macdData = macd(closes);
   const bb = bollingerBands(closes, 20, 2);
-
   const avgVol = sma(volumes, 20);
-  // Time-adjusted volume ratio — accounts for partial trading day
-  // At 11:40 AM ET we're ~33% through the session, so today's volume
-  // should be compared against 33% of the average full-day volume
+  const intradayRvol = intradayRvolBySymbol?.[symbol] || null;
+  const latestBarIsToday = String(last.date || "") === nyDateString();
+  let volumeSource = "daily";
   let volumeRatio = avgVol && avgVol > 0 ? last.volume / avgVol : null;
-  if (volumeRatio != null) {
+
+  if (latestBarIsToday && intradayRvol && Number.isFinite(Number(intradayRvol.rvol))) {
+    volumeRatio = Number(intradayRvol.rvol);
+    volumeSource = "intraday-rvol";
+  } else if (volumeRatio != null) {
     try {
-      const fmt = new Intl.DateTimeFormat("en-US", {
-        timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", hour12: false
-      });
-      const parts = fmt.formatToParts(new Date());
-      const etH = parseInt(parts.find(p => p.type === "hour")?.value || "15") % 24;
-      const etM = parseInt(parts.find(p => p.type === "minute")?.value || "30");
-      const minsIntoSession = Math.max(1, (etH * 60 + etM) - (9 * 60 + 30));
-      const sessionLength = 390; // 9:30 AM to 4:00 PM = 390 mins
-      const dayPctDone = Math.min(1, minsIntoSession / sessionLength);
-      // Only adjust if market is open and less than 80% through the day
-      if (dayPctDone > 0.05 && dayPctDone < 0.8) {
-        const expectedVolSoFar = avgVol * dayPctDone;
-        volumeRatio = last.volume / expectedVolSoFar;
+      const { isOpen, dayPctDone } = nyMarketProgress();
+      if (isOpen && latestBarIsToday && dayPctDone > 0.05 && dayPctDone < 0.8) {
+        volumeRatio = last.volume / (avgVol * dayPctDone);
+        volumeSource = "partial-day-estimate";
       }
     } catch {}
   }
@@ -927,12 +961,12 @@ function buildSignal(symbol, bars, spyMove21, marketBias, settings = {}, histori
   const recent20 = bars.slice(-20);
   const high20 = Math.max(...recent20.map(b => b.high));
   const low20 = Math.min(...recent20.map(b => b.low));
-
-  const trendBull = price > ema20 && price > ema50 && (!sma200 || price > sma200);
-  const setup = classifySetup(price, high20, low20, ema20, ema50, sma200, rsi14, macdData, adxVal, bb, pocketPivot.detected);
+  const trendBull = Boolean(ema20 && ema50 && price > ema20 && price > ema50 && (!sma200 || price > sma200));
 
   // ── Pocket Pivot (needs bars + indicators) ──
   const pocketPivot = detectPocketPivot(bars);
+
+  const setup = classifySetup(price, high20, low20, ema20, ema50, sma200, rsi14, macdData, adxVal, bb, pocketPivot.detected);
 
   // ── Fibonacci Retracement Levels ──
   const fib = calcFibLevels(bars, 50);
@@ -1376,20 +1410,23 @@ function buildSignal(symbol, bars, spyMove21, marketBias, settings = {}, histori
   }
 
   // ── Earnings Check ──
-  // Block trades within 3 days of earnings — unpredictable gap risk
+  // Block trades near earnings — unpredictable gap risk.
   const earningsEvent = earningsCalendar[symbol];
+  const earningsBlockDays = Number(settings.earningsBlockDays || 5);
   let earningsWarning = null;
   let earningsBlocked = false;
   if (earningsEvent?.date) {
     const daysToEarnings = (new Date(earningsEvent.date) - new Date()) / 86400000;
-    if (daysToEarnings >= 0 && daysToEarnings <= 3) {
+    if (daysToEarnings >= 0 && daysToEarnings <= earningsBlockDays) {
       earningsBlocked = true;
       earningsWarning = `⚠️ Earnings in ${Math.ceil(daysToEarnings)} day${Math.ceil(daysToEarnings) === 1 ? "" : "s"} (${earningsEvent.date}) — trade blocked. Earnings can cause unpredictable 5-20% gaps.`;
       warnings.push(earningsWarning);
-    } else if (daysToEarnings > 3 && daysToEarnings <= 14) {
+    } else if (daysToEarnings > earningsBlockDays && daysToEarnings <= 14) {
       earningsWarning = `📅 Earnings in ${Math.ceil(daysToEarnings)} days (${earningsEvent.date}) — be aware. Consider reducing size.`;
       warnings.push(earningsWarning);
     }
+  } else if (settings.blockUnknownEarnings) {
+    warnings.push("Earnings date unknown — safe mode will block new entries until earnings data is available.");
   }
 
   // ── Safety Decision ──
@@ -1516,13 +1553,13 @@ function buildSignal(symbol, bars, spyMove21, marketBias, settings = {}, histori
   if (!candle.strong && setup === "Breakout") rejectedReasons.push(`Breakout candle body is only ${candle.bodyPct}% of range — wick-heavy candle means indecision, not conviction.`);
 
   // 13. Earnings too close
-  if (earningsBlocked) rejectedReasons.push(earningsWarning || "Earnings within 3 days — trade blocked.");
+  if (earningsBlocked) rejectedReasons.push(earningsWarning || `Earnings within ${earningsBlockDays} days — trade blocked.`);
 
   // 14. Stage analysis
   if (stageInfo.stage !== 2) rejectedReasons.push(`${stageInfo.label} — only buy Stage 2 uptrends.`);
 
   // 15. Trend template
-  if (!trendTpl.passes) rejectedReasons.push(`Minervini trend template: ${trendTpl.score}/${trendTpl.total} checks pass (need all 7).`);
+  if (!trendTpl.passes) rejectedReasons.push(`Minervini trend template: ${trendTpl.score}/${trendTpl.total} checks pass (need all ${trendTpl.total}).`);
 
   // 16. Failed breakout
   if (failedBO.failed) rejectedReasons.push(failedBO.reason);
@@ -1545,6 +1582,7 @@ function buildSignal(symbol, bars, spyMove21, marketBias, settings = {}, histori
     rrNumber,
     trend: trendBull ? "UP" : "NEUTRAL",
     regime: trendBull ? "Bullish" : "Neutral",
+    marketRegime: marketBias,
     action: safety === "TRADE_READY" ? "LONG" : safety === "WATCHLIST" ? "WATCH" : "IGNORE",
     safety,
     entry: round(price),
@@ -1580,6 +1618,8 @@ function buildSignal(symbol, bars, spyMove21, marketBias, settings = {}, histori
     failedBreakout: failedBO.failed,
     fundamentals: fund || null,
     volumeRatio: round(volumeRatio, 2),
+    volumeSource,
+    intradayRvol: intradayRvol || null,
     pocketPivot,
     fib,
     sectorEtf: sectorCheck.etf,
@@ -1646,7 +1686,7 @@ function assignSignalGrade(signal, marketRegime) {
 
 // ─── Market Scan ───────────────────────────────────────────────────────────
 
-function scanMarket(barsBySymbol, settings = {}, historicalEdges = {}, liveQuotes = {}, earningsCalendar = {}, fundamentalsData = {}) {
+function scanMarket(barsBySymbol, settings = {}, historicalEdges = {}, liveQuotes = {}, earningsCalendar = {}, fundamentalsData = {}, intradayRvolBySymbol = {}) {
   const spyBars = barsBySymbol.SPY || [];
   const spyCloses = spyBars.map(b => b.close);
   const spyMove21 = spyCloses.length > 22
@@ -1657,7 +1697,7 @@ function scanMarket(barsBySymbol, settings = {}, historicalEdges = {}, liveQuote
   // First pass with neutral bias to determine regime
   const preliminary = Object.keys(barsBySymbol)
     .filter(s => !excluded.has(s))
-    .map(s => buildSignal(s, barsBySymbol[s], spyMove21, "NEUTRAL", settings, historicalEdges, barsBySymbol, earningsCalendar, fundamentalsData));
+    .map(s => buildSignal(s, barsBySymbol[s], spyMove21, "NEUTRAL", settings, historicalEdges, barsBySymbol, earningsCalendar, fundamentalsData, intradayRvolBySymbol));
 
   // Try real VIX data first, fall back to SPY-calculated historical volatility
   // Yahoo Finance blocks ^VIX from server IPs, so we calculate it from SPY returns
@@ -1668,7 +1708,7 @@ function scanMarket(barsBySymbol, settings = {}, historicalEdges = {}, liveQuote
   // Second pass with known regime
   const signals = Object.keys(barsBySymbol)
     .filter(s => !excluded.has(s))
-    .map(s => buildSignal(s, barsBySymbol[s], spyMove21, preRegime.regime, settings, historicalEdges, barsBySymbol, earningsCalendar, fundamentalsData))
+    .map(s => buildSignal(s, barsBySymbol[s], spyMove21, preRegime.regime, settings, historicalEdges, barsBySymbol, earningsCalendar, fundamentalsData, intradayRvolBySymbol))
     .sort((a, b) => b.confidence - a.confidence)
     .map((s, i) => ({ rank: i + 1, ...s }));
 
@@ -1725,4 +1765,8 @@ function scanMarket(barsBySymbol, settings = {}, historicalEdges = {}, liveQuote
   return { market, signals };
 }
 
-module.exports = { scanMarket, buildSignal, marketRegimeFromSignals, sma, ema, rsi, atr, adx, macd, bollingerBands, historicalScore };
+module.exports = {
+  scanMarket, buildSignal, marketRegimeFromSignals,
+  sma, ema, rsi, atr, adx, macd, bollingerBands, historicalScore,
+  calcFibLevels, detectPocketPivot, detectStage, trendTemplate, calcVWAP
+};

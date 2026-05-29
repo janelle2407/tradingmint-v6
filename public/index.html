@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>TradingMint PRO v7.3</title>
+<title>TradingMint PRO v7.4</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@700;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
@@ -420,7 +420,7 @@ label { font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: 
     <div class="logo-mark">M</div>
     <div class="logo-text">
       <div class="brand">TRADINGMINT</div>
-      <div class="sub">PRO v7.3 · Paper Only</div>
+      <div class="sub">PRO v7.4 · Paper Only</div>
     </div>
   </div>
 
@@ -501,7 +501,7 @@ label { font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: 
 
   <!-- Loading banner — shown while fetching data -->
   <div id="loadingBanner" style="display:none;background:linear-gradient(90deg,rgba(56,189,248,.12),rgba(52,211,153,.08));border-bottom:1px solid rgba(56,189,248,.2);padding:10px 16px;text-align:center;font-size:12px;color:var(--accent)">
-    <span id="loadingMsg">⟳ Fetching market data for 70 stocks... this takes about 30 seconds on first load.</span>
+    <span id="loadingMsg">⟳ Fetching market data for your configured universe... this takes about 30 seconds on first load.</span>
     <span id="loadingDots"></span>
   </div>
 
@@ -924,7 +924,7 @@ label { font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: 
 
 <script>
 // ══════════════════════════════════════════════════════════════════
-// TradingMint PRO v6 — Frontend
+// TradingMint PRO v7.4 — Frontend
 // ══════════════════════════════════════════════════════════════════
 
 let STATE = null;
@@ -2112,7 +2112,7 @@ function renderPages(d) {
   // Health
   const healthBody = document.getElementById('healthBody');
   if (healthBody) healthBody.innerHTML = (d.systems || []).map(s => sysRow(s.name, s.state, s.detail)).join('') +
-    `<div style="padding:10px 14px;font-size:11px;color:var(--muted)">Uptime: ${d.uptimeSeconds}s · v${d.version || '6.0.0'}</div>`;
+    `<div style="padding:10px 14px;font-size:11px;color:var(--muted)">Uptime: ${d.uptimeSeconds}s · v${d.version || '7.4.0'}</div>`;
   const errBox = document.getElementById('errorsBox');
   if (errBox) {
     errBox.innerHTML = d.errors?.length
@@ -2365,10 +2365,25 @@ function hideLoading() {
   if (loadingInterval) { clearInterval(loadingInterval); loadingInterval = null; }
 }
 
+
+function adminTokenHeaders(headers = {}) {
+  const token = localStorage.getItem('TRADINGMINT_ADMIN_TOKEN') || '';
+  return token ? { ...headers, 'x-admin-token': token } : headers;
+}
+
+async function apiFetch(url, options = {}) {
+  const opts = { ...options, headers: adminTokenHeaders(options.headers || {}) };
+  const res = await fetch(url, opts);
+  if ((res.status === 401 || res.status === 503) && typeof showToast === 'function') {
+    showToast('Admin token required. Open browser console and run: localStorage.setItem("TRADINGMINT_ADMIN_TOKEN", "your-token")', 8000);
+  }
+  return res;
+}
+
 async function forceRefresh() {
-  showLoading('⟳ Refreshing all market data — fetching latest prices for 70 stocks...');
+  showLoading('⟳ Refreshing all market data — fetching latest prices for your configured universe...');
   try {
-    const res = await fetch('/api/state?force=1', { cache: 'no-store' });
+    const res = await apiFetch('/api/state?force=1', { cache: 'no-store' });
     const data = await res.json();
     if (!data.ok) throw new Error(data.error || 'Server returned error');
     renderState(data);
@@ -2385,8 +2400,8 @@ async function loadState(force=false) {
   try {
     // Show loading only on first load (no signals yet)
     const isFirstLoad = !STATE;
-    if (isFirstLoad) showLoading('⟳ Loading scanner for the first time — fetching 3 years of data for 70 stocks. Takes ~30 seconds...');
-    const res = await fetch('/api/state', { cache: 'no-store' });
+    if (isFirstLoad) showLoading('⟳ Loading scanner for the first time — fetching 3 years of data for your configured universe. Takes ~30 seconds...');
+    const res = await apiFetch('/api/state', { cache: 'no-store' });
     const data = await res.json();
     if (!data.ok) throw new Error(data.error || 'Server error');
     renderState(data);
@@ -2402,7 +2417,7 @@ async function loadState(force=false) {
 async function enterPaperOverride(symbol) {
   // Manual override — bypass safety check and enter regardless of signal grade
   if (!confirm(`Enter paper trade for ${symbol}?\n\nThe system flagged this as not fully ready. You are overriding based on your own judgement.\n\nEntry, stop and target levels still apply. Max risk is 1% of account.`)) return;
-  const res = await fetch('/api/paper/enter/override', {
+  const res = await apiFetch('/api/paper/enter/override', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ symbol })
@@ -2418,7 +2433,7 @@ async function enterPaperOverride(symbol) {
 }
 
 async function enterPaper(symbol) {
-  const res = await fetch('/api/paper/enter', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({symbol}) });
+  const res = await apiFetch('/api/paper/enter', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({symbol}) });
   const out = await res.json();
   beep(out.ok ? 1000 : 300, 0.12);
   if (out.ok) speak(`${symbol} paper trade entered`);
@@ -2427,7 +2442,7 @@ async function enterPaper(symbol) {
 }
 
 async function exitPaper(id, symbol) {
-  await fetch('/api/paper/exit', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({positionId:id, reason:'Manual exit'}) });
+  await apiFetch('/api/paper/exit', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({positionId:id, reason:'Manual exit'}) });
   speak(`${symbol} position closed`);
   showToast(`✓ ${symbol} position closed`);
   await loadState(false);
@@ -2448,7 +2463,7 @@ async function runBacktest() {
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 90000); // 90s timeout
-    const res = await fetch('/api/backtest/run', {
+    const res = await apiFetch('/api/backtest/run', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: '{}',
@@ -2473,7 +2488,7 @@ async function runBacktest() {
 async function runOptimizer() {
   const box = document.getElementById('optimizerBox');
   if (box) box.innerHTML = '<div style="color:var(--accent);font-size:12px;padding:10px">⟳ Optimizing settings... testing hundreds of combinations.</div>';
-  const res = await fetch('/api/optimizer/run', { method:'POST', headers:{'Content-Type':'application/json'}, body:'{}' });
+  const res = await apiFetch('/api/optimizer/run', { method:'POST', headers:{'Content-Type':'application/json'}, body:'{}' });
   const out = await res.json();
   speak('Optimizer complete.');
   showToast('✓ Optimizer complete');
@@ -2482,7 +2497,7 @@ async function runOptimizer() {
 }
 
 async function applyOptimizer() {
-  const res = await fetch('/api/optimizer/apply', { method:'POST' });
+  const res = await apiFetch('/api/optimizer/apply', { method:'POST' });
   const out = await res.json();
   speak(out.ok ? 'Best optimizer settings applied.' : 'No optimizer result to apply.');
   showToast(out.ok ? '✓ Best settings applied' : '✗ ' + (out.error || 'No result to apply'));
@@ -2492,7 +2507,7 @@ async function applyOptimizer() {
 async function runWalkForward() {
   const box = document.getElementById('walkForwardBox');
   if (box) box.innerHTML = '<div style="color:var(--accent);font-size:12px;padding:10px">⟳ Running walk-forward validation...</div>';
-  const res = await fetch('/api/walkforward/run', { method:'POST', headers:{'Content-Type':'application/json'}, body:'{}' });
+  const res = await apiFetch('/api/walkforward/run', { method:'POST', headers:{'Content-Type':'application/json'}, body:'{}' });
   const out = await res.json();
   speak('Walk-forward validation complete.');
   showToast('✓ Walk-forward complete');
@@ -2503,7 +2518,7 @@ async function runWalkForward() {
 async function runTraining(apply) {
   const box = document.getElementById('trainingBox');
   if (box) box.innerHTML = '<div style="color:var(--accent);font-size:12px;padding:10px">⟳ Running self-training review...</div>';
-  const res = await fetch('/api/training/run', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({apply}) });
+  const res = await apiFetch('/api/training/run', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({apply}) });
   const out = await res.json();
   speak(out.decision?.canAutoApply ? 'Training evidence is positive.' : 'Training review complete.');
   showToast(apply && out.decision?.canAutoApply ? '✓ Training settings applied' : '✓ Training review complete');
@@ -2514,7 +2529,7 @@ async function runTraining(apply) {
 async function loadReport() {
   const box = document.getElementById('reportBox');
   if (box) box.innerHTML = '<div style="color:var(--accent);font-size:12px;padding:10px">⟳ Generating report...</div>';
-  const res = await fetch('/api/report', { cache:'no-store' });
+  const res = await apiFetch('/api/report', { cache:'no-store' });
   const out = await res.json();
   renderReport(out.report);
   await loadState(false);
@@ -2522,7 +2537,7 @@ async function loadReport() {
 
 async function loadReplay() {
   const sym = (document.getElementById('replaySymbol')?.value || '').trim().toUpperCase();
-  const res = await fetch('/api/replay' + (sym ? '?symbol=' + encodeURIComponent(sym) : ''), { cache:'no-store' });
+  const res = await apiFetch('/api/replay' + (sym ? '?symbol=' + encodeURIComponent(sym) : ''), { cache:'no-store' });
   const out = await res.json();
   renderReplay(out.events);
   // Exposure
@@ -2546,7 +2561,7 @@ async function saveSettings() {
     spreadPct: Number(document.getElementById('setSpread').value),
     autoPaper: true, startingCash: 5000
   };
-  await fetch('/api/settings', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+  await apiFetch('/api/settings', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
   speak('Settings saved.');
   showToast('✓ Settings saved');
   await loadState(false);
@@ -2554,7 +2569,7 @@ async function saveSettings() {
 
 async function resetDb() {
   if (!confirm('Reset the paper account? This clears all trades and resets to $5,000. This cannot be undone.')) return;
-  await fetch('/api/reset', { method:'POST' });
+  await apiFetch('/api/reset', { method:'POST' });
   selectedSymbol = null;
   speak('Paper account reset to five thousand dollars.');
   showToast('✓ Account reset to $5,000');
