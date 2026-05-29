@@ -886,16 +886,31 @@ function buildSignal(symbol, bars, spyMove21, marketBias, settings = {}, histori
 
   // 1. Market regime — explain exactly what needs to change
   if (marketBias !== "BULLISH") {
-    const regime = scanned?.market?.regime || marketBias;
-    const breadth = scanned?.market?.breadth;
-    const indexScore = scanned?.market?.indexScore;
+    // Estimate SPY/QQQ alignment score from barsBySymbol directly
+    let indexScore = null;
+    const spyB = barsBySymbol.SPY || [];
+    const qqqB = barsBySymbol.QQQ || [];
+    if (spyB.length >= 50 && qqqB.length >= 50) {
+      let sc = 0;
+      for (const etfB of [spyB, qqqB]) {
+        const ec = etfB.map(b => b.close);
+        const p = ec.at(-1);
+        const e20v = ema(ec, 20), e50v = ema(ec, 50);
+        const s200v = ec.length >= 200 ? sma(ec, 200) : null;
+        if (e20v && p > e20v) sc++;
+        if (e50v && p > e50v) sc++;
+        if (s200v && p > s200v) sc++;
+        if (e20v && e50v && e20v > e50v) sc++;
+      }
+      indexScore = sc;
+    }
     const needed = [];
-    if (breadth != null && breadth < 55) needed.push(`breadth needs to reach 55% (currently ${breadth}%)`);
     if (indexScore != null && indexScore < 6) needed.push(`SPY/QQQ need more MAs aligned (${indexScore}/10 now, need 6+)`);
+    needed.push("market breadth needs to reach 55%+ (more stocks in uptrends)");
     rejectedReasons.push(
       marketBias === "BEARISH"
-        ? `Market is BEARISH — no longs until conditions improve. ${needed.join(", ") || "Wait for breadth and index recovery."}`
-        : `Market is NEUTRAL — to go BULLISH: ${needed.join(", ") || "breadth and index structure need to improve."}`
+        ? `Market is BEARISH — no longs until conditions improve. ${needed.join("; ")}.`
+        : `Market is NEUTRAL — to go BULLISH: ${needed.join("; ")}.`
     );
   }
 
