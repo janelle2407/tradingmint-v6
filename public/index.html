@@ -2254,13 +2254,38 @@ async function exitPaper(id, symbol) {
 // ── Analysis actions ─────────────────────────────────────────
 async function runBacktest() {
   const box = document.getElementById('backtestBox');
-  if (box) box.innerHTML = '<div style="color:var(--accent);font-size:12px;padding:10px">⟳ Running 3-year backtest... this may take a moment.</div>';
-  const res = await fetch('/api/backtest/run', { method:'POST', headers:{'Content-Type':'application/json'}, body:'{}' });
-  const out = await res.json();
-  speak('Backtest complete.');
-  showToast('✓ Backtest complete');
-  await loadState(false);
-  renderBacktest(out.result);
+  if (box) box.innerHTML = `<div style="color:var(--accent);font-size:13px;padding:14px">
+    <div style="margin-bottom:8px">⟳ Running backtest across all stocks...</div>
+    <div style="font-size:11px;color:var(--muted)">This usually takes 20–40 seconds. Please wait — do not click again.</div>
+    <div style="margin-top:10px;font-size:11px;color:var(--text2)">
+      What this does: tests your strategy on 3+ years of real price data to measure win rate,
+      expectancy, and profit factor. Results unlock TRADE_READY signals.
+    </div>
+  </div>`;
+  showToast('Backtest running — please wait 20-40 seconds...', 8000);
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 90000); // 90s timeout
+    const res = await fetch('/api/backtest/run', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+      signal: controller.signal
+    });
+    clearTimeout(timeout);
+    const out = await res.json();
+    if (!out.ok) throw new Error(out.error || 'Backtest failed');
+    speak('Backtest complete.');
+    showToast('✓ Backtest complete — historical edge data updated');
+    await loadState(false);
+    renderBacktest(out.result);
+  } catch (err) {
+    const msg = err.name === 'AbortError'
+      ? 'Backtest timed out. Render free tier may be slow — try again in a minute.'
+      : `Backtest error: ${err.message}`;
+    if (box) box.innerHTML = `<div style="color:var(--red);font-size:12px;padding:14px">✗ ${msg}</div>`;
+    showToast('✗ ' + msg, 6000);
+  }
 }
 
 async function runOptimizer() {

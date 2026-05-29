@@ -145,7 +145,7 @@ function classifySetup(close, high20, ema20v, ema50v, macdData, adxVal) {
 
 // ─── Signal Backtest ─────────────────────────────────────────────────────────
 
-function runSignalBacktest(symbol, bars, options = {}, barsBySymbol = {}) {
+function runSignalBacktest(symbol, bars, options = {}, barsBySymbol = {}, sharedRegimeCache = null) {
   const minConf  = options.minConfidence || 72;
   const minRR    = options.minRiskReward || 2.0;
   const slipPct  = options.slippagePct   ?? 0.05;
@@ -174,15 +174,18 @@ function runSignalBacktest(symbol, bars, options = {}, barsBySymbol = {}) {
   const etfBars   = barsBySymbol[etfSymbol] || [];
 
   // Cache regime every 10 bars for speed
-  // Regime cache: recalculate every 50 bars (balance accuracy vs performance)
-  // historicalBreadthAtIndex is expensive - loops all symbols
-  const regimeCache = new Map();
+  // Use shared pre-computed regime cache if available (much faster)
+  // Falls back to per-symbol cache if called standalone
+  const localCache = new Map();
   function getCachedRegime(idx) {
     const bucket = Math.floor(idx / 50) * 50;
-    if (!regimeCache.has(bucket)) {
-      regimeCache.set(bucket, historicalRegimeAtIndex(barsBySymbol, bucket));
+    if (sharedRegimeCache && sharedRegimeCache.has(bucket)) {
+      return sharedRegimeCache.get(bucket);
     }
-    return regimeCache.get(bucket);
+    if (!localCache.has(bucket)) {
+      localCache.set(bucket, historicalRegimeAtIndex(barsBySymbol, bucket));
+    }
+    return localCache.get(bucket);
   }
 
   for (let i = 100; i < bars.length - holdDays - 2; i++) {
@@ -329,9 +332,20 @@ function runSignalBacktest(symbol, bars, options = {}, barsBySymbol = {}) {
 
 function runPortfolioBacktest(barsBySymbol, options = {}) {
   const excluded = new Set(["SPY", "QQQ", "DIA", "IWM", "VIX", "^VIX"]);
+
+  // Pre-compute regime timeline ONCE for all symbols to share
+  // This is the critical performance fix — without this each symbol
+  // recalculates regime across all other symbols = O(n^2) slowness
+  const reference = barsBySymbol.SPY || barsBySymbol[Object.keys(barsBySymbol)[0]] || [];
+  const sharedRegimeCache = new Map();
+  const CACHE_STEP = 50;
+  for (let i = 100; i < reference.length; i += CACHE_STEP) {
+    sharedRegimeCache.set(i, historicalRegimeAtIndex(barsBySymbol, i));
+  }
+
   const results = Object.entries(barsBySymbol)
     .filter(([s]) => !excluded.has(s))
-    .map(([s, b]) => runSignalBacktest(s, b, options, barsBySymbol));
+    .map(([s, b]) => runSignalBacktest(s, b, options, barsBySymbol, sharedRegimeCache));
 
   const allTrades = results.flatMap(r => r.trades);
   const edges = {};
