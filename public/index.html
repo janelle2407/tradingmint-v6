@@ -1735,20 +1735,25 @@ function renderDashboard(d) {
   const ms = d.marketSession;
   if (mhBanner && ms) {
     if (!ms.autoPaperAllowed) {
-      const isOpen = ms.session === 'MARKET_OPEN';
-      const color = ms.session === 'OPENING_WINDOW' ? 'var(--green)' :
-                    ms.session === 'WEEKEND' || ms.session === 'OVERNIGHT' ? 'rgba(100,120,150,.15)' : 'rgba(251,191,36,.06)';
-      const border = ms.session === 'OPENING_WINDOW' ? 'rgba(52,211,153,.3)' :
-                     ms.session === 'WEEKEND' || ms.session === 'OVERNIGHT' ? 'rgba(100,120,150,.2)' : 'rgba(251,191,36,.25)';
+      const isClosedPeriod = ['WEEKEND','OVERNIGHT','AFTER_HOURS','PRE_MARKET'].includes(ms.session);
+      const isLunch = ms.session === 'LUNCH_HOURS';
+      const isCloseBuffer = ms.session === 'MARKET_CLOSE_BUFFER';
+      const color  = isClosedPeriod ? 'rgba(100,120,150,.1)' : 'rgba(251,191,36,.06)';
+      const border = isClosedPeriod ? 'rgba(100,120,150,.2)' : 'rgba(251,191,36,.25)';
+      const icon   = isLunch ? '🥗' : isCloseBuffer ? '🔔' : '⏰';
+      // Show manual entry hint during market hours
+      const canManual = !isClosedPeriod;
       mhBanner.style.display = 'block';
-      mhBanner.innerHTML = `<div style="background:${color};border:1px solid ${border};border-radius:8px;padding:10px 14px;font-size:12px;line-height:1.5">
-        <span style="font-weight:600">⏰ Auto-paper is currently OFF</span> — ${ms.reason}
-        <br><span style="color:var(--muted);font-size:11px">Sydney time: ${ms.aestNote} · ET: ${ms.etTime}</span>
+      mhBanner.innerHTML = `<div style="background:${color};border:1px solid ${border};border-radius:8px;padding:10px 14px;font-size:12px;line-height:1.6">
+        <span style="font-weight:600">${icon} Auto-paper is OFF</span> — ${ms.reason}
+        ${canManual ? `<br><span style="color:var(--yellow);font-size:11px">⚡ Signals with ✓ BUY can still be entered manually — click any stock and use the Paper Buy button.</span>` : ''}
+        <br><span style="color:var(--muted);font-size:11px">Sydney: ${ms.aestNote} · ET: ${ms.etTime}</span>
       </div>`;
     } else {
+      const sessionLabel = ms.session === 'MORNING_SESSION' ? '☀️ Morning Session' : '🌅 Afternoon Session';
       mhBanner.style.display = 'block';
       mhBanner.innerHTML = `<div style="background:rgba(52,211,153,.08);border:1px solid rgba(52,211,153,.3);border-radius:8px;padding:10px 14px;font-size:12px">
-        <span style="font-weight:600;color:var(--green)">✅ Opening Window ACTIVE</span> — Auto-paper is entering trades now. Best entry time of the day.
+        <span style="font-weight:600;color:var(--green)">✅ ${sessionLabel} ACTIVE</span> — Auto-paper is scanning and entering trades automatically.
         <br><span style="color:var(--muted);font-size:11px">ET: ${ms.etTime} · Sydney: ${ms.aestNote}</span>
       </div>`;
     }
