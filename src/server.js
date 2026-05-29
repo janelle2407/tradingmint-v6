@@ -41,17 +41,16 @@ function configuredSymbols() {
 }
 
 function requireAdmin(req, res, next) {
-  if (!ADMIN_TOKEN) {
-    if (process.env.RENDER || process.env.NODE_ENV === "production") {
-      return res.status(503).json({
-        ok: false,
-        error: "ADMIN_TOKEN is required for write endpoints in production. Set it in your environment variables."
-      });
+  // Auth disabled — personal paper trading tool with no financial risk
+  // All endpoints are open. Add ADMIN_TOKEN env var to re-enable protection.
+  if (ADMIN_TOKEN) {
+    const supplied = req.get("x-admin-token") || req.query.adminToken
+      || req.get("authorization")?.replace("Bearer ", "")
+      || "";
+    if (supplied !== ADMIN_TOKEN) {
+      return res.status(401).json({ ok: false, error: "Unauthorized — set TRADINGMINT_ADMIN_TOKEN in browser localStorage." });
     }
-    return next();
   }
-  const supplied = req.get("x-admin-token") || req.query.adminToken || "";
-  if (supplied !== ADMIN_TOKEN) return res.status(401).json({ ok: false, error: "Unauthorized" });
   return next();
 }
 
@@ -353,11 +352,26 @@ app.post("/api/backtest/run", requireAdmin, async (req, res) => {
   try {
     const db = readDb();
     const universe = await getUniverse(req.query.force === "1");
-    const result = runPortfolioBacktest(universe.completedBarsBySymbol || universe.barsBySymbol, { ...db.settings, ...(req.body || {}) });
+    const allBars = universe.completedBarsBySymbol || universe.barsBySymbol;
+
+    // Limit to top 60 symbols to avoid Render free tier 30s timeout
+    // Priority: keep SPY, QQQ and the highest-volume stocks
+    const PRIORITY = ["SPY","QQQ","NVDA","AAPL","MSFT","AMD","META","GOOGL","AMZN","TSLA",
+      "ARM","AVGO","CRWD","ORCL","MSFT","PLTR","HOOD","ROKU","MRVL","KLAC",
+      "XLK","XLY","XLI","XLF","SMH","IGV","XBI","SOXX"];
+    const allSymbols = Object.keys(allBars);
+    const prioritized = [
+      ...PRIORITY.filter(s => allBars[s]),
+      ...allSymbols.filter(s => !PRIORITY.includes(s))
+    ].slice(0, 60);
+    const barsForBacktest = {};
+    for (const s of prioritized) barsForBacktest[s] = allBars[s];
+
+    const result = runPortfolioBacktest(barsForBacktest, { ...db.settings, ...(req.body || {}) });
     db.historicalEdges = result.edges || db.historicalEdges;
     db.backtests.unshift(result);
     db.backtests = db.backtests.slice(0, 30);
-    addJournal(db, "BACKTEST_RUN_3Y", "-", "Backtest completed and historical edges updated", result.summary);
+    addJournal(db, "BACKTEST_RUN", "-", `Backtest completed on ${prioritized.length} symbols`, result.summary);
     writeDb(db);
     res.json({ ok: true, result });
   } catch (error) {

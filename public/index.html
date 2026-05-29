@@ -883,6 +883,16 @@ label { font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: 
             <div><label>Spread % (bid/ask cost)</label><input id="setSpread" type="number" step="0.01"></div>
             <div><label>Auto Paper Trading</label><select id="setAutoPaper" disabled><option value="true">Always ON</option></select></div>
           </div>
+          <div style="margin-top:14px;padding:12px;background:rgba(251,191,36,.06);border:1px solid rgba(251,191,36,.2);border-radius:8px;margin-bottom:12px">
+            <div style="font-size:11px;color:var(--yellow);font-weight:600;margin-bottom:6px">🔑 Admin Token (for Backtest &amp; Paper Trades)</div>
+            <div style="display:flex;gap:8px;align-items:center">
+              <input type="password" id="adminTokenInput" placeholder="Paste ADMIN_TOKEN from Render here"
+                style="flex:1;padding:8px 10px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text1);font-size:12px"
+                oninput="saveAdminToken(this.value)">
+              <span id="adminTokenStatus" style="font-size:11px;color:var(--muted);white-space:nowrap">Not set</span>
+            </div>
+            <div style="font-size:10px;color:var(--muted);margin-top:5px">Must match ADMIN_TOKEN in Render. Only needed once per device. Leave blank to disable auth.</div>
+          </div>
           <div style="margin-top:14px;display:flex;gap:8px">
             <button class="btn btn-green" onclick="saveSettings()">Save Settings</button>
             <button class="btn btn-red" onclick="resetDb()">Reset $5K Account</button>
@@ -2549,6 +2559,29 @@ async function loadReplay() {
         Object.entries(Object.fromEntries(STATE.paper.open.map(p => [p.symbol, p.setup]))).map(([sym]) =>
           `<div class="sys-row"><span class="sys-name" style="font-family:var(--font-mono)">${sym}</span></div>`).join('')
       : '<div style="color:var(--muted);font-size:12px">No open positions.</div>';
+  }
+}
+
+function saveAdminToken(value) {
+  if (value && value.trim()) {
+    localStorage.setItem('TRADINGMINT_ADMIN_TOKEN', value.trim());
+    document.getElementById('adminTokenStatus').textContent = '✓ Saved';
+    document.getElementById('adminTokenStatus').style.color = 'var(--green)';
+  } else {
+    localStorage.removeItem('TRADINGMINT_ADMIN_TOKEN');
+    document.getElementById('adminTokenStatus').textContent = 'Cleared';
+    document.getElementById('adminTokenStatus').style.color = 'var(--muted)';
+  }
+}
+
+function loadAdminTokenField() {
+  const token = localStorage.getItem('TRADINGMINT_ADMIN_TOKEN') || '';
+  const input = document.getElementById('adminTokenInput');
+  const status = document.getElementById('adminTokenStatus');
+  if (input) input.value = token;
+  if (status) {
+    status.textContent = token ? '✓ Token saved' : 'Not set';
+    status.style.color = token ? 'var(--green)' : 'var(--muted)';
   }
 }
 
