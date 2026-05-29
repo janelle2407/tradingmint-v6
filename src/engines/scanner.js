@@ -746,7 +746,7 @@ function detectFailedBreakout(bars, setup) {
 
 // ─── Main Signal Builder ───────────────────────────────────────────────────
 
-function buildSignal(symbol, bars, spyMove21, marketBias, settings = {}, historicalEdges = {}, barsBySymbol = {}, earningsCalendar = {}) {
+function buildSignal(symbol, bars, spyMove21, marketBias, settings = {}, historicalEdges = {}, barsBySymbol = {}, earningsCalendar = {}, fundamentalsData = {}) {
   const closes = bars.map(b => b.close);
   const volumes = bars.map(b => b.volume || 0);
   const last = bars[bars.length - 1];
@@ -790,6 +790,11 @@ function buildSignal(symbol, bars, spyMove21, marketBias, settings = {}, histori
   // ── Relative Strength vs SPY ──
   const spyClosesForRs = (barsBySymbol.SPY || []).map(b => b.close);
   const rs = calcRelativeStrength(closes, spyClosesForRs);
+
+  // ── Fundamentals (Earnings Acceleration + Institutional Ownership) ──
+  const fund = fundamentalsData[symbol] || null;
+  const hasEpsData  = fund && fund.latestEpsGrowth != null;
+  const hasInstData = fund && fund.instPctHeld != null;
 
   // ── Stage Analysis (Weinstein) ──
   const stageInfo = detectStage(bars);
@@ -935,6 +940,74 @@ function buildSignal(symbol, bars, spyMove21, marketBias, settings = {}, histori
     reasons.push(`Tight 3-week range (${weeklyTight.rangePct}%) — constructive consolidation.`);
   } else if (weeklyTight.rangePct != null && weeklyTight.rangePct > 8) {
     warnings.push(`Wide 3-week range (${weeklyTight.rangePct}%) — too loose for a quality VCP entry.`);
+  }
+
+  // ── Earnings Acceleration & Institutional Sponsorship ──
+  if (fund && !fund.error) {
+    // EPS growth scoring (O'Neil CAN SLIM — the E)
+    if (hasEpsData) {
+      if (fund.latestEpsGrowth >= 50) {
+        technicalScore += 14;
+        reasons.push(`EPS growth is exceptional at +${fund.latestEpsGrowth}% — top-tier fundamental strength.`);
+      } else if (fund.latestEpsGrowth >= 25) {
+        technicalScore += 9;
+        reasons.push(`EPS growth of +${fund.latestEpsGrowth}% meets the 25% minimum for growth stocks.`);
+      } else if (fund.latestEpsGrowth < 0) {
+        technicalScore -= 10;
+        warnings.push(`EPS declined ${fund.latestEpsGrowth}% — earnings are shrinking. Avoid until growth resumes.`);
+      } else if (fund.latestEpsGrowth < 10) {
+        technicalScore -= 4;
+        warnings.push(`EPS growth is only ${fund.latestEpsGrowth}% — below the 25% minimum for quality growth setups.`);
+      }
+
+      // Acceleration bonus (most powerful fundamental signal)
+      if (fund.epsAccelerating === true) {
+        technicalScore += 8;
+        reasons.push(`EPS growth is ACCELERATING — earnings momentum is building. This is a high-quality signal.`);
+      } else if (fund.epsAccelerating === false) {
+        technicalScore -= 5;
+        warnings.push(`EPS growth is decelerating — earnings momentum is slowing. Be cautious.`);
+      }
+    }
+
+    // Revenue growth scoring
+    if (fund.latestRevGrowth != null) {
+      if (fund.latestRevGrowth >= 20) {
+        technicalScore += 6;
+        reasons.push(`Revenue growing at +${fund.latestRevGrowth}% — strong top-line growth.`);
+      } else if (fund.latestRevGrowth < 5) {
+        warnings.push(`Revenue growth only ${fund.latestRevGrowth}% — weak sales growth.`);
+      }
+    }
+
+    // Earnings surprise
+    if (fund.latestSurprise != null && fund.latestSurprise >= 10) {
+      technicalScore += 5;
+      reasons.push(`Beat earnings estimate by ${fund.latestSurprise}% last quarter.`);
+    }
+
+    // Institutional ownership (O'Neil CAN SLIM — the I)
+    if (hasInstData) {
+      if (fund.instPctHeld >= 30 && fund.instIncreasing) {
+        technicalScore += 8;
+        reasons.push(`${fund.instPctHeld}% held by institutions and increasing — smart money is accumulating.`);
+      } else if (fund.instPctHeld >= 30) {
+        technicalScore += 4;
+        reasons.push(`${fund.instPctHeld}% institutional ownership — significant smart money interest.`);
+      } else if (fund.instPctHeld < 5) {
+        warnings.push(`Only ${fund.instPctHeld}% institutional ownership — not on radar of major funds yet.`);
+      }
+      if (fund.instIncreasing === false && fund.instNetChange < -0.1) {
+        technicalScore -= 6;
+        warnings.push(`Institutional ownership declining — funds may be exiting this position.`);
+      }
+    }
+  } else {
+    // No fundamental data — note it but don't penalise
+    // ETFs and some stocks don't have earnings data
+    if (!["XLK","XLF","XLV","XLY","XLI","XLE","XLP","XLU","XLB","XLRE","SPY","QQQ","DIA","IWM"].includes(symbol)) {
+      warnings.push("Fundamental data unavailable — technical analysis only.");
+    }
   }
 
   // ── Market Follow-Through Day ──
@@ -1319,6 +1392,7 @@ function buildSignal(symbol, bars, spyMove21, marketBias, settings = {}, histori
     weeklyTight,
     followThrough,
     failedBreakout: failedBO.failed,
+    fundamentals: fund || null,
     volumeRatio: round(volumeRatio, 2),
     sectorEtf: sectorCheck.etf,
     sectorBullish: sectorCheck.bullish,
@@ -1384,7 +1458,7 @@ function assignSignalGrade(signal, marketRegime) {
 
 // ─── Market Scan ───────────────────────────────────────────────────────────
 
-function scanMarket(barsBySymbol, settings = {}, historicalEdges = {}, liveQuotes = {}, earningsCalendar = {}) {
+function scanMarket(barsBySymbol, settings = {}, historicalEdges = {}, liveQuotes = {}, earningsCalendar = {}, fundamentalsData = {}) {
   const spyBars = barsBySymbol.SPY || [];
   const spyCloses = spyBars.map(b => b.close);
   const spyMove21 = spyCloses.length > 22
@@ -1395,7 +1469,7 @@ function scanMarket(barsBySymbol, settings = {}, historicalEdges = {}, liveQuote
   // First pass with neutral bias to determine regime
   const preliminary = Object.keys(barsBySymbol)
     .filter(s => !excluded.has(s))
-    .map(s => buildSignal(s, barsBySymbol[s], spyMove21, "NEUTRAL", settings, historicalEdges, barsBySymbol, earningsCalendar));
+    .map(s => buildSignal(s, barsBySymbol[s], spyMove21, "NEUTRAL", settings, historicalEdges, barsBySymbol, earningsCalendar, fundamentalsData));
 
   // Try real VIX data first, fall back to SPY-calculated historical volatility
   // Yahoo Finance blocks ^VIX from server IPs, so we calculate it from SPY returns
@@ -1406,7 +1480,7 @@ function scanMarket(barsBySymbol, settings = {}, historicalEdges = {}, liveQuote
   // Second pass with known regime
   const signals = Object.keys(barsBySymbol)
     .filter(s => !excluded.has(s))
-    .map(s => buildSignal(s, barsBySymbol[s], spyMove21, preRegime.regime, settings, historicalEdges, barsBySymbol, earningsCalendar))
+    .map(s => buildSignal(s, barsBySymbol[s], spyMove21, preRegime.regime, settings, historicalEdges, barsBySymbol, earningsCalendar, fundamentalsData))
     .sort((a, b) => b.confidence - a.confidence)
     .map((s, i) => ({ rank: i + 1, ...s }));
 

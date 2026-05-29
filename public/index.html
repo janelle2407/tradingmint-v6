@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>TradingMint PRO v7.0</title>
+<title>TradingMint PRO v7.1</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@700;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
@@ -420,7 +420,7 @@ label { font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: 
     <div class="logo-mark">M</div>
     <div class="logo-text">
       <div class="brand">TRADINGMINT</div>
-      <div class="sub">PRO v7.0 · Paper Only</div>
+      <div class="sub">PRO v7.1 · Paper Only</div>
     </div>
   </div>
 
@@ -1597,6 +1597,33 @@ function tradeDetailHTML(s) {
     html += `<div style="margin-top:10px;background:rgba(248,113,113,.06);border:1px solid rgba(248,113,113,.2);border-radius:6px;padding:10px">
       <div style="font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--red);margin-bottom:6px">Why not TRADE_READY</div>
       ${s.rejectedReasons.map(r => `<div style="font-size:11.5px;color:var(--text2);padding:3px 0;border-bottom:1px solid rgba(248,113,113,.1)">✗ ${r}</div>`).join('')}
+    </div>`;
+  }
+
+  // Fundamentals panel — EPS growth, revenue, institutional ownership
+  if (s.fundamentals && !s.fundamentals.error) {
+    const f = s.fundamentals;
+    const epsColor = f.latestEpsGrowth >= 25 ? 'var(--green)' : f.latestEpsGrowth >= 0 ? 'var(--yellow)' : 'var(--red)';
+    const instColor = f.instIncreasing ? 'var(--green)' : f.instIncreasing === false ? 'var(--red)' : 'var(--muted)';
+    html += `<div style="background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:10px">
+      <div style="font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);margin-bottom:8px">Fundamentals (CAN SLIM)</div>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;text-align:center;margin-bottom:8px">
+        <div>
+          <div style="font-family:var(--font-mono);font-size:14px;color:${epsColor}">${f.latestEpsGrowth != null ? (f.latestEpsGrowth > 0 ? '+' : '') + f.latestEpsGrowth + '%' : '--'}</div>
+          <div style="font-size:9px;color:var(--muted)">EPS GROWTH</div>
+          ${f.epsAccelerating === true ? '<div style="font-size:9px;color:var(--green)">▲ Accelerating</div>' : f.epsAccelerating === false ? '<div style="font-size:9px;color:var(--red)">▼ Decelerating</div>' : ''}
+        </div>
+        <div>
+          <div style="font-family:var(--font-mono);font-size:14px;color:${f.latestRevGrowth >= 20 ? 'var(--green)' : f.latestRevGrowth >= 0 ? 'var(--text2)' : 'var(--red)'}">${f.latestRevGrowth != null ? (f.latestRevGrowth > 0 ? '+' : '') + f.latestRevGrowth + '%' : '--'}</div>
+          <div style="font-size:9px;color:var(--muted)">REV GROWTH</div>
+        </div>
+        <div>
+          <div style="font-family:var(--font-mono);font-size:14px;color:${instColor}">${f.instPctHeld != null ? f.instPctHeld + '%' : '--'}</div>
+          <div style="font-size:9px;color:var(--muted)">INST. OWNED</div>
+          ${f.instIncreasing === true ? '<div style="font-size:9px;color:var(--green)">▲ Increasing</div>' : f.instIncreasing === false ? '<div style="font-size:9px;color:var(--red)">▼ Decreasing</div>' : ''}
+        </div>
+      </div>
+      ${f.latestSurprise != null ? `<div style="font-size:11px;color:${f.latestSurprise >= 10 ? 'var(--green)' : 'var(--text2)'}">Last earnings surprise: ${f.latestSurprise > 0 ? '+' : ''}${f.latestSurprise}%</div>` : ''}
     </div>`;
   }
 
