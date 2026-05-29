@@ -1,12 +1,16 @@
-const { fetchHistory } = require('../data/marketData');
+const { fetchHistory } = require("../data/marketData");
+
+/* =========================
+   INDICATORS
+========================= */
 
 function sma(arr, n) {
-  if (!Array.isArray(arr) || arr.length < n) return null;
+  if (!arr || arr.length < n) return null;
   return arr.slice(-n).reduce((a, b) => a + b, 0) / n;
 }
 
 function ema(arr, n) {
-  if (!Array.isArray(arr) || arr.length < n) return null;
+  if (!arr || arr.length < n) return null;
   const k = 2 / (n + 1);
   let val = arr[arr.length - n];
   for (let i = arr.length - n + 1; i < arr.length; i++) {
@@ -15,70 +19,6 @@ function ema(arr, n) {
   return val;
 }
 
-function atr(high, low, close, n = 14) {
-  if (!Array.isArray(close) || close.length < n + 1 || !Array.isArray(high) || !Array.isArray(low)) return null;
-  const trs = [];
-  for (let i = 1; i < close.length; i++) {
-    const tr = Math.max(
-      high[i] - low[i],
-      Math.abs(high[i] - close[i - 1]),
-      Math.abs(low[i] - close[i - 1])
-    );
-    trs.push(tr);
-  }
-  return sma(trs, n);
-}
-
-function getRelativeStrength(closes, spy) {
-  if (!Array.isArray(closes) || !Array.isArray(spy) || closes.length !== spy.length || !closes.length) return 0;
-  const rs = closes.map((c, i) => {
-    const sc = spy[i];
-    return sc && sc > 0 ? c / sc : 0;
-  });
-  const last = rs[rs.length - 1];
-  const avg = sma(rs, Math.min(50, rs.length));
-  return avg ? last / avg : 0;
-}
-
-async function scanMarket({ symbols = [] }) {
-  // Pull SPY for relative strength and regime filtering
-  const spyData = await fetchHistory('SPY', '6mo', '1d');
-  const spyClose = (spyData && spyData.indicators && spyData.indicators.quote && spyData.indicators.quote[0].close) || [];
-
-  const results = [];
-  for (const symbol of symbols) {
-    try {
-      const data = await fetchHistory(symbol, '6mo', '1d');
-      if (!data || !data.indicators || !data.indicators.quote || !data.indicators.quote[0]) {
-        continue;
-      }
-      const close = data.indicators.quote[0].close || [];
-      const high  = data.indicators.quote[0].high  || [];
-      const low   = data.indicators.quote[0].low   || [];
-      const volume = data.indicators.quote[0].volume || [];
-      if (close.length < 50) continue;
-      const price = close[close.length - 1];
-      const ema20 = ema(close, 20);
-      const ema50 = ema(close, 50);
-      const trend = ema20 && ema50 && price > ema20 && ema20 > ema50 ? 1 : 0;
-      const momentum = close.length >= 5 && price > close[close.length - 5] ? 1 : 0;
-      const avgVol = sma(volume, 20) || 1;
-      const volScore = volume[volume.length - 1] / avgVol;
-      const rs = getRelativeStrength(close, spyClose);
-      const volatility = atr(high, low, close);
-      const score =
-        trend * 0.25 +
-        momentum * 0.2 +
-        Math.min(volScore / 2, 1) * 0.15 +
-        (Math.min(rs, 2) / 2) * 0.2 +
-        (volatility ? 1 : 0) * 0.1;
-      results.push({ symbol, score, price, atr: volatility, rs, volume: volScore });
-    } catch (err) {
-      console.error(`Error scanning ${symbol}:`, err);
-    }
-  }
-  return results.sort((a, b) => b.score - a.score);
-}
 function rsi(values, period = 14) {
   if (!values || values.length < period + 1) return null;
 
@@ -97,13 +37,153 @@ function rsi(values, period = 14) {
   return 100 - (100 / (1 + rs));
 }
 
+function atr(high, low, close, n = 14) {
+  if (!close || close.length < n + 1) return null;
+
+  let trs = [];
+
+  for (let i = 1; i < close.length; i++) {
+    const tr = Math.max(
+      high[i] - low[i],
+      Math.abs(high[i] - close[i - 1]),
+      Math.abs(low[i] - close[i - 1])
+    );
+    trs.push(tr);
+  }
+
+  return sma(trs, n);
+}
+
+function adx(high, low, close, period = 14) {
+  if (!high || high.length < period * 2) return null;
+
+  let trs = [];
+  let plusDM = [];
+  let minusDM = [];
+
+  for (let i = 1; i < high.length; i++) {
+    const upMove = high[i] - high[i - 1];
+    const downMove = low[i - 1] - low[i];
+
+    plusDM.push(upMove > downMove && upMove > 0 ? upMove : 0);
+    minusDM.push(downMove > upMove && downMove > 0 ? downMove : 0);
+
+    const tr = Math.max(
+      high[i] - low[i],
+      Math.abs(high[i] - close[i - 1]),
+      Math.abs(low[i] - close[i - 1])
+    );
+
+    trs.push(tr);
+  }
+
+  let atrVal = sma(trs.slice(0, period), period);
+  let pDM = sma(plusDM.slice(0, period), period);
+  let mDM = sma(minusDM.slice(0, period), period);
+
+  let dx = [];
+
+  for (let i = period; i < trs.length; i++) {
+    atrVal = (atrVal * (period - 1) + trs[i]) / period;
+    pDM = (pDM * (period - 1) + plusDM[i]) / period;
+    mDM = (mDM * (period - 1) + minusDM[i]) / period;
+
+    const pDI = (pDM / atrVal) * 100;
+    const mDI = (mDM / atrVal) * 100;
+
+    dx.push(Math.abs(pDI - mDI) / (pDI + mDI) * 100);
+  }
+
+  return sma(dx, period);
+}
+
+/* =========================
+   HELPERS
+========================= */
+
+function getRelativeStrength(closes, spy) {
+  if (!spy || closes.length !== spy.length) return 0;
+
+  const rsLine = closes.map((c, i) => c / spy[i]);
+  const rsAvg = sma(rsLine, 50);
+
+  if (!rsAvg) return 0;
+
+  return rsLine[rsLine.length - 1] / rsAvg;
+}
+
+/* =========================
+   MAIN SCANNER
+========================= */
+
+async function scanMarket({ symbols = [] }) {
+  const spyData = await fetchHistory("SPY", "6mo", "1d");
+  const spyClose = spyData?.indicators?.quote[0]?.close || [];
+
+  const results = [];
+
+  for (const symbol of symbols) {
+    const data = await fetchHistory(symbol, "6mo", "1d");
+    if (!data) continue;
+
+    const { close, high, low, volume } = data.indicators.quote[0];
+    if (!close || close.length < 50) continue;
+
+    const price = close[close.length - 1];
+
+    // Indicators
+    const ema20 = ema(close, 20);
+    const ema50 = ema(close, 50);
+    const rsiVal = rsi(close);
+    const atrVal = atr(high, low, close);
+    const adxVal = adx(high, low, close);
+
+    // Trend
+    const trend = price > ema20 && ema20 > ema50 ? 1 : 0;
+
+    // Momentum
+    const momentum = price > close[close.length - 5] ? 1 : 0;
+
+    // Volume
+    const avgVol = sma(volume, 20);
+    const volScore = avgVol ? volume[volume.length - 1] / avgVol : 0;
+
+    // Relative Strength
+    const rs = getRelativeStrength(close, spyClose);
+
+    // Scoring (weighted model)
+    const score =
+      trend * 0.25 +
+      momentum * 0.2 +
+      Math.min(volScore / 2, 1) * 0.15 +
+      Math.min(rs, 2) / 2 * 0.2 +
+      (adxVal && adxVal > 20 ? 1 : 0) * 0.1 +
+      (rsiVal && rsiVal < 70 ? 1 : 0) * 0.1;
+
+    results.push({
+      symbol,
+      score,
+      price,
+      atr: atrVal,
+      rs,
+      volume: volScore,
+      rsi: rsiVal,
+      adx: adxVal
+    });
+  }
+
+  return results.sort((a, b) => b.score - a.score);
+}
+
+/* =========================
+   EXPORT EVERYTHING
+========================= */
+
 module.exports = {
   scanMarket,
   ema,
   sma,
   rsi,
-  atr
+  atr,
+  adx
 };
-
-
-
