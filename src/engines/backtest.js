@@ -124,12 +124,21 @@ function historicalRegimeAtIndex(barsBySymbol, endIndex) {
   if (Number.isFinite(vix)) {
     volatility = vix < 18 ? "LOW" : vix < 25 ? "MEDIUM" : vix < 30 ? "ELEVATED" : "HIGH";
   }
-  const vixPause = Number.isFinite(vix) && vix > 25;
-  const vixHalt  = Number.isFinite(vix) && vix > 30;
+  // Calculated SPY volatility (annualised stddev of log returns × 100) runs higher than
+  // the real VIX index. Use raised thresholds so the backtest regime matches what the
+  // live scanner sees with actual VIX data:
+  //   vixPause (suppress BULLISH): calculated vol > 35  ≈ real VIX ~28
+  //   vixHalt  (force BEARISH):    calculated vol > 45  ≈ real VIX ~38 (severe stress only)
+  // This prevents the backtest from flagging normal 2022-style sell-offs as BEARISH and
+  // wiping out all trade opportunities.
+  const vixPause = Number.isFinite(vix) && vix > 35;
+  const vixHalt  = Number.isFinite(vix) && vix > 45;
   let regime = "NEUTRAL";
   if (breadth >= 55 && indexScore >= 6 && !vixPause) regime = "BULLISH";
   else if (breadth >= 45 && indexScore >= 4 && !vixPause) regime = "NEUTRAL";
-  if (breadth < 35 || indexScore <= 2 || vixHalt) regime = "BEARISH";
+  // vixHalt alone only pushes to BEARISH if breadth and index score are also weak —
+  // a strong tape can still be NEUTRAL even during elevated vol (e.g. a V-shaped recovery)
+  if (breadth < 35 || indexScore <= 2 || (vixHalt && breadth < 45)) regime = "BEARISH";
   return { regime, breadth, spyScore, qqqScore, indexScore, volatility, vix: Number(vix.toFixed(1)) };
 }
 

@@ -1353,7 +1353,7 @@ function buildSignal(symbol, bars, spyMove21, marketBias, settings = {}, histori
 
   // ── Confidence Score ──
   // v6: edge weight tweaked slightly, technical score uses ADX/MACD so more accurate
-  const edgeW = settings.edgeWeight || 0.35;
+  const edgeW = settings.edgeWeight != null ? Number(settings.edgeWeight) : 0.35;
   const techW = 1 - edgeW;
   const confidence = Math.max(1, Math.min(99, Math.round(technicalScore * techW + edge.score * edgeW)));
 
