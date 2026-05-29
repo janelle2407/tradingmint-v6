@@ -93,7 +93,7 @@ async function getUniverse(force = false) {
 
   const db = readDb();
   const symbols = configuredSymbols();
-  const universe = await fetchUniverse(symbols, SCAN_LIMIT, db.settings.historicalRange || "3y");
+  const universe = await fetchUniverse(symbols, SCAN_LIMIT, db.settings.historicalRange || "max");
   universe.completedBarsBySymbol = universe.barsBySymbol;
 
   if (isMarketHours()) {

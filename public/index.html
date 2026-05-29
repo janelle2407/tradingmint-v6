@@ -493,7 +493,7 @@ label { font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: 
       <div class="tb-value" id="topSector" style="color:var(--purple)">--</div>
     </div>
     <div class="tb-cell">
-      <button class="btn btn-primary" id="refreshBtn" onclick="forceRefresh()">↺ Refresh</button>
+      <button class="btn btn-primary" id="refreshBtn" onclick="forceRefresh()" title="Refresh scanner signals. Hold Shift to force re-fetch from Yahoo Finance.">↺ Refresh</button>
       <button class="btn btn-primary" onclick="runBacktest()">Backtest</button>
       <button class="btn btn-yellow" onclick="runOptimizer()">Optimize</button>
     </div>
@@ -2391,9 +2391,14 @@ async function apiFetch(url, options = {}) {
 }
 
 async function forceRefresh() {
-  showLoading('⟳ Refreshing all market data — fetching latest prices for your configured universe...');
+  // Use cached bars (fast). Hold Shift+click to force re-fetch from Yahoo (slow).
+  const forceYahoo = window._shiftHeld ? '?force=1' : '';
+  const msg = forceYahoo
+    ? '⟳ Force re-fetching all prices from Yahoo Finance — this takes 30-60 seconds...'
+    : '⟳ Refreshing scanner signals...';
+  showLoading(msg);
   try {
-    const res = await apiFetch('/api/state?force=1', { cache: 'no-store' });
+    const res = await apiFetch('/api/state' + forceYahoo, { cache: 'no-store' });
     const data = await res.json();
     if (!data.ok) throw new Error(data.error || 'Server returned error');
     renderState(data);
@@ -2404,6 +2409,10 @@ async function forceRefresh() {
     hideLoading();
   }
 }
+
+// Track Shift key so Refresh button knows to force re-fetch
+document.addEventListener('keydown', e => { if (e.key === 'Shift') window._shiftHeld = true; });
+document.addEventListener('keyup',   e => { if (e.key === 'Shift') window._shiftHeld = false; });
 
 async function loadState(force=false) {
   if (force) { await forceRefresh(); return; }
