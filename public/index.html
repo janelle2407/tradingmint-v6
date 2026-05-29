@@ -238,7 +238,7 @@ body::before {
 #mainChartCanvas { display: block !important; }
 
 /* ── Trade detail panel ─────────────────────────────────────────── */
-.detail-scroll { padding: 14px; max-height: 340px; overflow-y: auto; font-size: 12px; }
+.detail-scroll { padding: 14px; max-height: 600px; overflow-y: auto; font-size: 12px; }
 .detail-metric { display: flex; justify-content: space-between; align-items: center; padding: 7px 0; border-bottom: 1px solid var(--border2); }
 .detail-metric:last-child { border-bottom: none; }
 .detail-metric .dm-label { color: var(--text2); }
@@ -1456,8 +1456,23 @@ function tradeDetailHTML(s) {
       <div style="background:rgba(251,191,36,.08);border:1px solid rgba(251,191,36,.3);border-radius:6px;padding:8px 12px;margin-bottom:10px;font-size:12px">
         <span style="color:var(--yellow);font-weight:600">⚡ Signal is ready but auto-paper is paused</span>
         <span style="color:var(--text2)"> — ${currentSession.reason}</span>
-        <br><span style="color:var(--muted);font-size:11px">You can enter this trade manually right now using the Paper Buy button below.</span>
+        <br><span style="color:var(--muted);font-size:11px">Use the button below to enter manually.</span>
       </div>` : ''}
+
+      ${s.safety === 'TRADE_READY' ? `
+      <button onclick="enterPaper('${s.symbol}')"
+        style="width:100%;padding:11px;background:rgba(52,211,153,.15);color:var(--green);border:1px solid rgba(52,211,153,.35);border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;margin-bottom:12px"
+        onmouseover="this.style.background='rgba(52,211,153,.25)'" onmouseout="this.style.background='rgba(52,211,153,.15)'">
+        ✓ Paper Buy ${s.symbol} — Enter Trade Now
+      </button>` : `
+      <button onclick="enterPaperOverride('${s.symbol}')"
+        style="width:100%;padding:10px;background:rgba(251,191,36,.08);color:var(--yellow);border:1px solid rgba(251,191,36,.3);border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;margin-bottom:12px"
+        onmouseover="this.style.background='rgba(251,191,36,.18)'" onmouseout="this.style.background='rgba(251,191,36,.08)'">
+        ⚡ Manual Override — Paper Buy ${s.symbol} Anyway
+      </button>`}
+      <div style="font-size:10px;color:var(--muted);margin-bottom:12px;text-align:center">
+        Entry: ${money(s.entry)} · Stop: ${money(s.stop)} · Target: ${money(s.target1)}
+      </div>
       <div style="font-size:12px;color:var(--text2)">${s.setup} — ${setupDescriptions[s.setup] || 'Standard setup.'}</div>
     </div>
     <div style="background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px;margin-bottom:12px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">
