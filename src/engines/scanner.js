@@ -1024,11 +1024,8 @@ function buildSignal(symbol, bars, spyMove21, marketBias, settings = {}, histori
       }
     }
   } else {
-    // No fundamental data — note it but don't penalise
-    // ETFs and some stocks don't have earnings data
-    if (!["XLK","XLF","XLV","XLY","XLI","XLE","XLP","XLU","XLB","XLRE","SPY","QQQ","DIA","IWM"].includes(symbol)) {
-      warnings.push("Fundamental data unavailable — technical analysis only.");
-    }
+    // No fundamental data available — this is normal for ETFs and some stocks
+    // Don't show a warning — fundamentals are optional enrichment only
   }
 
   // ── Market Follow-Through Day ──
