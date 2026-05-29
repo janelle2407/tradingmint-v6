@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>TradingMint PRO v6.8</title>
+<title>TradingMint PRO v6.9</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@700;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
@@ -420,7 +420,7 @@ label { font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: 
     <div class="logo-mark">M</div>
     <div class="logo-text">
       <div class="brand">TRADINGMINT</div>
-      <div class="sub">PRO v6.8 · Paper Only</div>
+      <div class="sub">PRO v6.9 · Paper Only</div>
     </div>
   </div>
 
@@ -2455,18 +2455,25 @@ function getETMins() {
   }
 }
 
-// Every 60 seconds — refresh during opening window (9:45-10:30 AM ET)
+// Every 60 seconds during active trading sessions
+// Morning: 9:45–11:30 AM ET | Afternoon: 1:30–3:45 PM ET
 setInterval(() => {
   const { mins, day } = getETMins();
-  const inWindow = day !== 0 && day !== 6 && mins >= 9*60+45 && mins < 10*60+30;
-  if (inWindow) loadState(false);
+  const isWeekday = day !== 0 && day !== 6;
+  const morningSession   = mins >= 9*60+45  && mins < 11*60+30;
+  const afternoonSession = mins >= 13*60+30 && mins < 15*60+45;
+  const inActiveSession  = isWeekday && (morningSession || afternoonSession);
+  if (inActiveSession) loadState(false);
 }, 60000);
 
-// Every 2 minutes — refresh outside window (end-of-day prices update)
+// Every 2 minutes outside active sessions
 setInterval(() => {
   const { mins, day } = getETMins();
-  const inWindow = day !== 0 && day !== 6 && mins >= 9*60+45 && mins < 10*60+30;
-  if (!inWindow) loadState(false);
+  const isWeekday = day !== 0 && day !== 6;
+  const morningSession   = mins >= 9*60+45  && mins < 11*60+30;
+  const afternoonSession = mins >= 13*60+30 && mins < 15*60+45;
+  const inActiveSession  = isWeekday && (morningSession || afternoonSession);
+  if (!inActiveSession) loadState(false);
 }, 120000);
 marketCountdown();
 loadState(false);
