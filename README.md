@@ -1,4 +1,4 @@
-# TradingMint PRO v6.0
+# TradingMint PRO v7.4.0
 
 ## What's New in v6.0
 

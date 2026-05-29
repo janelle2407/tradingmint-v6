@@ -136,8 +136,9 @@ function exitPaper(db, positionId, exitPrice, reason = "Manual exit") {
   const position = db.paper.open[index];
   const adjustedExit = applyCosts(Number(exitPrice || position.lastPrice || position.entry), "sell", db.settings);
   const effectiveEntry = position.avgEntry || position.entry;
+  // Commission charged once on exit only — entry commission was already deducted from cash at entry time.
   const proceeds = adjustedExit * position.shares - Number(db.settings.commissionPerTrade || 0);
-  const cost = effectiveEntry * position.shares + Number(db.settings.commissionPerTrade || 0);
+  const cost = effectiveEntry * position.shares;
   const pnl  = proceeds - cost;
   const pnlPct = cost ? (pnl / cost) * 100 : 0;
 

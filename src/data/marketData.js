@@ -78,8 +78,12 @@ async function yahooBarsRaw(symbol, range = "max", interval = "1d") {
       // Try query2 if query1 is blocked
       if (response.status === 403 || response.status === 429) {
         const url2 = urls[1];
+        // Use a fresh AbortController — the original may already be aborted or its
+        // timeout may fire and cancel this request before it completes.
+        const controller2 = new AbortController();
+        const timeout2 = setTimeout(() => controller2.abort(), 8000);
         const res2 = await fetch(url2, {
-          signal: controller.signal,
+          signal: controller2.signal,
           headers: {
             "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "Accept": "application/json, text/plain, */*",
@@ -98,6 +102,7 @@ async function yahooBarsRaw(symbol, range = "max", interval = "1d") {
           low: Number(quote2.low?.[idx]), close: Number(quote2.close?.[idx]),
           volume: Number(quote2.volume?.[idx] || 0)
         })).filter(b => Number.isFinite(b.open) && Number.isFinite(b.close) && b.close > 0);
+        clearTimeout(timeout2);
         if (bars2.length < 200) throw new Error(`${clean} only ${bars2.length} bars from query2`);
         const out2 = { bars: bars2, usedRange: range, interval, firstDate: bars2[0]?.date, lastDate: bars2.at(-1)?.date, barCount: bars2.length };
         cache.set(key, { time: Date.now(), ...out2 });
