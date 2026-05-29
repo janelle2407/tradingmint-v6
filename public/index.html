@@ -674,7 +674,7 @@ label { font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: 
         <div class="card-head"><h2>All Signals</h2></div>
         <div style="overflow:auto;max-height:600px">
           <table class="scanner">
-            <thead><tr><th style="width:30px">#</th><th style="width:55px">Stock</th><th style="width:100px">Setup</th><th style="width:120px">Score</th><th style="width:90px">Edge</th><th style="width:75px">Price</th><th style="width:55px">RS%</th><th style="width:80px">Grade</th></tr></thead>
+            <thead><tr><th style="width:28px">#</th><th style="width:52px">Stock</th><th style="width:95px">Setup</th><th style="width:110px">Score</th><th style="width:88px">Edge</th><th style="width:70px">Price</th><th style="width:105px">Grade · RS%</th></tr></thead>
             <tbody id="scannerFullRows"></tbody>
           </table>
         </div>
@@ -1978,9 +1978,8 @@ function renderFullScanner() {
         <td style="color:var(--text2)">${s.setup}</td>
         <td><div class="score-bar-wrap"><div class="score-bar"><div class="score-bar-fill" style="${scoreBarFill(s.confidence)}"></div></div><span class="score-num" style="color:${scoreColor(s.confidence)}">${s.confidence}</span></div></td>
         <td>${gradeTag(s.historicalGrade)}</td>
-        <td style="font-family:var(--font-mono)">${money(s.price)}</td>
-        <td style="font-size:10px">${s.rs?.rsPercentile != null ? `<span style="color:${s.rs.rsPercentile>=80?'var(--green)':s.rs.rsPercentile>=50?'var(--text2)':'var(--red)'}">RS ${s.rs.rsPercentile}%</span>` : '--'}</td>
-        <td>${s.grade ? signalGradeTag(s.grade) : chip(s.safety)}</td>
+        <td style="font-family:var(--font-mono);font-size:11px">${money(s.price)}</td>
+        <td style="white-space:nowrap">${s.grade ? signalGradeTag(s.grade) : chip(s.safety)}${s.rs?.rsPercentile != null ? ` <span style="font-size:10px;font-family:var(--font-mono);color:${s.rs.rsPercentile>=80?'var(--green)':s.rs.rsPercentile>=50?'var(--text2)':'var(--red)'}">${s.rs.rsPercentile}%</span>` : ''}</td>
       </tr>`).join('');
   }
 }

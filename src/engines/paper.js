@@ -1,7 +1,7 @@
 const { applyCosts, canEnter } = require("./risk");
-function round(v, d=2) { const n=Number(v); return Number.isFinite(n)?Number(n.toFixed(d)):null; }
 const { addAlert, addJournal } = require("../storage/db");
 const { exposureBlocked } = require("./correlation");
+function round(v, d = 2) { const n = Number(v); return Number.isFinite(n) ? Number(n.toFixed(d)) : null; }
 
 function enterPaper(db, signal, source = "manual", barsBySymbol = {}) {
   const exposure = signal ? exposureBlocked(signal, db.paper, db.settings, barsBySymbol) : { blocked: false };
@@ -98,9 +98,6 @@ function exitPaper(db, positionId, exitPrice, reason = "Manual exit") {
 
 // Partial exit — sell half the position at Target 1, move stop to breakeven
 function partialExitPaper(db, position, exitPrice, reason) {
-  const { addAlert, addJournal } = require("../storage/db");
-  const { applyCosts } = require("./risk");
-
   const halfShares = Math.floor(position.shares / 2);
   if (halfShares < 1) return null; // Can't split 1 share
 

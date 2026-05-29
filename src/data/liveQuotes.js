@@ -9,11 +9,20 @@ let consecutiveFailures = 0;
 const MAX_FAILURES = 5; // Stop trying live after too many failures
 
 function isMarketHours() {
+  // Use Intl API — reliable on Linux/Render (toLocaleString fails on some cloud servers)
   const now = new Date();
-  const et = new Date(now.toLocaleString("en-US", { timeZone: "America/New_York" }));
-  const day = et.getDay();
+  const fmt = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    hour: "2-digit", minute: "2-digit", weekday: "short", hour12: false
+  });
+  const parts = fmt.formatToParts(now);
+  const get = t => parts.find(p => p.type === t)?.value;
+  const days = { Sun:0, Mon:1, Tue:2, Wed:3, Thu:4, Fri:5, Sat:6 };
+  const day = days[get("weekday")] ?? now.getDay();
   if (day === 0 || day === 6) return false;
-  const mins = et.getHours() * 60 + et.getMinutes();
+  const h = parseInt(get("hour")) % 24;
+  const m = parseInt(get("minute"));
+  const mins = h * 60 + m;
   return mins >= 9 * 60 + 25 && mins < 16 * 60 + 5;
 }
 
