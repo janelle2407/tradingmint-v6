@@ -16,21 +16,57 @@ const PORT = process.env.PORT || 3000;
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-app.use(express.static(path.join(__dirname, "../public")));
+
 
 /* =========================
    ROUTES
 ========================= */
 
 // Root
-app.get("/", (req, res) => {
+// ✅ FIRST: routes
+app.post("/scan", async (req, res) => {
+  try {
+    const result = await scanMarket(req.body);
+    res.json(result);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Scan failed" });
+  }
+});
+
+app.post("/backtest", (req, res) => {
+  try {
+    const result = runPortfolioBacktest(req.body);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: "Backtest failed" });
+  }
+});
+
+app.post("/correlation", async (req, res) => {
+  try {
+    const result = await getCorrelationMatrix(req.body);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: "Correlation failed" });
+  }
+});
+
+app.post("/risk", (req, res) => {
+  const result = checkRisk(req.body.symbol, req.body.config);
+  res.json(result);
+});
+
+
+// ✅ THEN static files
+app.use(express.static(path.join(__dirname, "../public")));
+
+
+// ✅ THEN fallback (VERY LAST)
+app.get("*", (req, res) => {
   res.sendFile(path.join(__dirname, "../public/index.html"));
 });
 
-// Health check
-app.get("/health", (req, res) => {
-  res.json({ status: "ok" });
-});
 
 /* =========================
    SCAN (FIXED ASYNC)
