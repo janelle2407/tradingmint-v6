@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>TradingMint PRO v7.2</title>
+<title>TradingMint PRO v7.3</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@700;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
@@ -420,7 +420,7 @@ label { font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: 
     <div class="logo-mark">M</div>
     <div class="logo-text">
       <div class="brand">TRADINGMINT</div>
-      <div class="sub">PRO v7.2 · Paper Only</div>
+      <div class="sub">PRO v7.3 · Paper Only</div>
     </div>
   </div>
 
@@ -1440,6 +1440,7 @@ function tradeDetailHTML(s) {
     'Momentum': 'All indicators aligned — MACD bullish, trend up, ADX showing strength. Strong setup.',
     'Squeeze Breakout': 'Bollinger Bands tightened (low volatility) and price is now breaking out. Can be explosive.',
     'Pullback': 'Stock is in an uptrend and pulled back to a support level. Good risk/reward entry.',
+    'Pocket Pivot': 'Institutional buying signal inside the base — before the breakout. Volume exceeds the largest down-day of the last 10 sessions, confirming smart money accumulation. Earlier and lower-risk entry than waiting for a full breakout.',
     'Watch': 'Not yet meeting all criteria. Worth monitoring for improvement.'
   };
   let html = `
@@ -1650,6 +1651,48 @@ function tradeDetailHTML(s) {
         </div>
       </div>
       ${f.latestSurprise != null ? `<div style="font-size:11px;color:${f.latestSurprise >= 10 ? 'var(--green)' : 'var(--text2)'}">Last earnings surprise: ${f.latestSurprise > 0 ? '+' : ''}${f.latestSurprise}%</div>` : ''}
+    </div>`;
+  }
+
+  // ── Fibonacci Retracement Panel ──
+  if (s.fib) {
+    const f = s.fib;
+    const gpColor = f.inGoldenPocket ? 'var(--green)' : f.nearFibLevel ? 'var(--yellow)' : 'var(--muted)';
+    html += `<div style="background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:10px">
+      <div style="font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);margin-bottom:8px">Fibonacci Levels (${f.lookback}-day swing)</div>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:4px;margin-bottom:8px">
+        <div style="text-align:center">
+          <div style="font-size:11px;color:var(--muted)">Swing High</div>
+          <div style="font-family:var(--font-mono);font-size:12px;color:var(--red)">$${f.swingHigh}</div>
+        </div>
+        <div style="text-align:center">
+          <div style="font-size:11px;color:var(--muted)">Golden Pocket</div>
+          <div style="font-family:var(--font-mono);font-size:12px;color:var(--yellow)">$${f.r618}–$${f.r500}</div>
+        </div>
+        <div style="text-align:center">
+          <div style="font-size:11px;color:var(--muted)">Swing Low</div>
+          <div style="font-family:var(--font-mono);font-size:12px;color:var(--green)">$${f.swingLow}</div>
+        </div>
+      </div>
+      <div style="font-size:11px;margin-bottom:4px">
+        ${f.inGoldenPocket ? `<span style="color:var(--green)">✓ Price is in the golden pocket (61.8%–50%) — ideal pullback entry zone</span>` :
+          f.nearFibLevel ? `<span style="color:var(--yellow)">Price near ${f.nearestName} Fibonacci level ($${f.nearestLevel})</span>` :
+          `<span style="color:var(--muted)">Price ${f.retracementPct}% below swing high · Nearest Fib: ${f.nearestName} at $${f.nearestLevel}</span>`}
+      </div>
+      <div style="font-size:10px;color:var(--muted)">Key levels: 78.6%=$${f.r786} · 61.8%=$${f.r618} · 50%=$${f.r500} · 38.2%=$${f.r382}</div>
+    </div>`;
+  }
+
+  // ── Pocket Pivot Panel ──
+  if (s.pocketPivot?.detected) {
+    html += `<div style="background:rgba(52,211,153,.06);border:1px solid rgba(52,211,153,.3);border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:10px">
+      <div style="font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--green);margin-bottom:6px">✓ Pocket Pivot Detected</div>
+      <div style="font-size:11.5px;color:var(--text2);margin-bottom:6px">${s.pocketPivot.reason}</div>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:4px;text-align:center">
+        <div><div style="font-size:9px;color:var(--muted)">TODAY VOL</div><div style="font-family:var(--font-mono);font-size:12px;color:var(--green)">${s.pocketPivot.todayVol ? Math.round(s.pocketPivot.todayVol/1000)+'k' : '--'}</div></div>
+        <div><div style="font-size:9px;color:var(--muted)">MAX DOWN VOL</div><div style="font-family:var(--font-mono);font-size:12px;color:var(--red)">${s.pocketPivot.maxDownVol ? Math.round(s.pocketPivot.maxDownVol/1000)+'k' : '--'}</div></div>
+        <div><div style="font-size:9px;color:var(--muted)">RATIO</div><div style="font-family:var(--font-mono);font-size:12px;color:var(--green)">${s.pocketPivot.volRatioVsDown}x</div></div>
+      </div>
     </div>`;
   }
 

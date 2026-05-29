@@ -201,7 +201,9 @@ function candleQuality(bar) {
 
 // ─── Setup Classification ──────────────────────────────────────────────────
 
-function classifySetup(price, high20, low20, ema20, ema50, sma200, rsi14, macdData, adxVal, bb) {
+function classifySetup(price, high20, low20, ema20, ema50, sma200, rsi14, macdData, adxVal, bb, pocketPivotDetected = false) {
+  // Pocket Pivot: institutional buying signal INSIDE base (early entry before breakout)
+  if (pocketPivotDetected) return "Pocket Pivot";
   // Breakout: price near 20-day high with momentum
   if (price >= high20 * 0.988 && rsi14 >= 50 && rsi14 <= 72) return "Breakout";
   // EMA Bounce: pulled back to EMA20 in uptrend, bouncing
@@ -476,6 +478,11 @@ function setupVolumeScore(setup, bars, volumeRatio, baseQuality = null) {
     else if (volumeRatio <= 0.9) { score += 6; reasons.push("Pullback volume quiet — constructive."); }
   } else if (setup === "Momentum") {
     if (volumeRatio >= 1.2) { score += 7; reasons.push("Momentum move has supportive volume."); }
+  } else if (setup === "Pocket Pivot") {
+    // Pocket pivot volume already validated in detectPocketPivot
+    // Just reward any additional volume expansion
+    if (volumeRatio >= 1.5) { score += 8; reasons.push(`Pocket pivot with strong relative volume (${volumeRatio.toFixed(1)}x average) — double confirmation.`); }
+    else { score += 4; }
   }
   if (baseQuality?.volumeDryUpPct >= 20 && volumeRatio >= 1.2) {
     score += 5; reasons.push("Volume pattern: dry-up followed by renewed demand.");
@@ -744,6 +751,133 @@ function detectFailedBreakout(bars, setup) {
   return { failed: false };
 }
 
+// ─── Pocket Pivot Detection ──────────────────────────────────────────────────
+// Developed by Chris Kacher & Gil Morales (disciples of William O'Neil)
+// Identifies institutional buying INSIDE a base — before the breakout
+// Entry is earlier and lower-risk than waiting for a full breakout
+//
+// Rules:
+// 1. Green candle (close > open)
+// 2. Price coming up and off the 10-day or 50-day SMA
+// 3. TODAY'S volume > highest DOWN-volume day of the last 10 days
+// 4. Stock must be in a base or Stage 2 uptrend (checked externally)
+
+function detectPocketPivot(bars) {
+  if (!Array.isArray(bars) || bars.length < 12) return { detected: false };
+
+  const last = bars.at(-1);
+  const prev10 = bars.slice(-11, -1); // prior 10 bars
+
+  // Rule 1: green candle
+  const isGreen = last.close > last.open;
+  if (!isGreen) return { detected: false, reason: "Not a green candle" };
+
+  // Rule 2: price crossing up through or bouncing off 10-day SMA
+  const closes10 = bars.slice(-11).map(b => b.close);
+  const sma10 = closes10.reduce((a, b) => a + b, 0) / closes10.length;
+  const ema50v = ema(bars.map(b => b.close), 50);
+  const nearSma10  = last.close >= sma10  * 0.99 && last.close <= sma10  * 1.06;
+  const nearEma50  = ema50v && last.close >= ema50v * 0.99 && last.close <= ema50v * 1.06;
+  const atKeyLevel = nearSma10 || nearEma50;
+
+  // Rule 3: today's volume > highest DOWN-volume day of last 10 days
+  const downVolumes = prev10
+    .filter(b => b.close < b.open) // red/down days only
+    .map(b => Number(b.volume || 0));
+  const maxDownVol = downVolumes.length > 0 ? Math.max(...downVolumes) : 0;
+  const volConfirmed = maxDownVol > 0 && last.volume > maxDownVol;
+
+  if (!volConfirmed) return {
+    detected: false,
+    reason: `Volume (${Math.round(last.volume/1000)}k) needs to exceed largest down-volume day (${Math.round(maxDownVol/1000)}k) of last 10 days`
+  };
+
+  if (!atKeyLevel) return {
+    detected: false,
+    reason: `Price ($${round(last.close)}) not near 10-day SMA ($${round(sma10)}) or 50-day EMA ($${ema50v ? round(ema50v) : '--'})`
+  };
+
+  return {
+    detected: true,
+    sma10: round(sma10),
+    ema50: ema50v ? round(ema50v) : null,
+    todayVol: last.volume,
+    maxDownVol,
+    volRatioVsDown: round(last.volume / maxDownVol, 2),
+    nearSma10,
+    nearEma50,
+    reason: `Pocket Pivot: green candle near ${nearSma10 ? '10-day SMA' : '50-day EMA'} on volume ${round(last.volume/maxDownVol,1)}x the largest down-day. Institutional buying signal.`
+  };
+}
+
+// ─── Fibonacci Retracement Levels ─────────────────────────────────────────────
+// Key Fibonacci levels used by professional traders as support/resistance
+// Levels: 23.6%, 38.2%, 50%, 61.8% (golden pocket), 78.6%
+// Calculated from the most recent significant swing high to swing low
+
+function calcFibLevels(bars, lookback = 50) {
+  if (!Array.isArray(bars) || bars.length < lookback) return null;
+
+  const slice = bars.slice(-lookback);
+  const highs  = slice.map(b => b.high);
+  const lows   = slice.map(b => b.low);
+  const swingHigh = Math.max(...highs);
+  const swingLow  = Math.min(...lows);
+  const range  = swingHigh - swingLow;
+
+  if (range <= 0) return null;
+
+  const price = bars.at(-1).close;
+
+  // Standard Fibonacci retracement levels (from swing high down to swing low)
+  const levels = {
+    r100:  round(swingHigh),                           // 100% = swing high (resistance)
+    r786:  round(swingHigh - range * 0.786),           // 78.6%
+    r618:  round(swingHigh - range * 0.618),           // 61.8% — golden pocket start
+    r500:  round(swingHigh - range * 0.500),           // 50%   — golden pocket mid
+    r382:  round(swingHigh - range * 0.382),           // 38.2%
+    r236:  round(swingHigh - range * 0.236),           // 23.6%
+    r0:    round(swingLow),                            // 0% = swing low (support)
+    swingHigh: round(swingHigh),
+    swingLow:  round(swingLow),
+    range: round(range),
+    lookback
+  };
+
+  // Which level is price currently nearest to?
+  const fibPrices = [levels.r786, levels.r618, levels.r500, levels.r382, levels.r236];
+  const fibNames  = ["78.6%", "61.8%", "50%", "38.2%", "23.6%"];
+  let nearestLevel = null, nearestName = null, nearestDist = Infinity;
+  for (let i = 0; i < fibPrices.length; i++) {
+    const dist = Math.abs(price - fibPrices[i]) / price;
+    if (dist < nearestDist) {
+      nearestDist = dist;
+      nearestLevel = fibPrices[i];
+      nearestName  = fibNames[i];
+    }
+  }
+
+  // Is price in the golden pocket (61.8%–50% retracement)? Best pullback entry zone
+  const inGoldenPocket = price >= levels.r500 && price <= levels.r618;
+  // Is price near any Fibonacci level (within 1.5%)?
+  const nearFibLevel = nearestDist < 0.015;
+  // Is price above the 61.8% level? (Still in upper range — bullish)
+  const aboveFib618  = price > levels.r618;
+
+  return {
+    ...levels,
+    price: round(price),
+    nearestLevel,
+    nearestName,
+    nearestDist: round(nearestDist * 100, 2), // as percentage
+    inGoldenPocket,
+    nearFibLevel,
+    aboveFib618,
+    // Retracement from swing high (how far has price pulled back?)
+    retracementPct: round(((swingHigh - price) / range) * 100, 1)
+  };
+}
+
 // ─── Main Signal Builder ───────────────────────────────────────────────────
 
 function buildSignal(symbol, bars, spyMove21, marketBias, settings = {}, historicalEdges = {}, barsBySymbol = {}, earningsCalendar = {}, fundamentalsData = {}) {
@@ -795,7 +929,13 @@ function buildSignal(symbol, bars, spyMove21, marketBias, settings = {}, histori
   const low20 = Math.min(...recent20.map(b => b.low));
 
   const trendBull = price > ema20 && price > ema50 && (!sma200 || price > sma200);
-  const setup = classifySetup(price, high20, low20, ema20, ema50, sma200, rsi14, macdData, adxVal, bb);
+  const setup = classifySetup(price, high20, low20, ema20, ema50, sma200, rsi14, macdData, adxVal, bb, pocketPivot.detected);
+
+  // ── Pocket Pivot (needs bars + indicators) ──
+  const pocketPivot = detectPocketPivot(bars);
+
+  // ── Fibonacci Retracement Levels ──
+  const fib = calcFibLevels(bars, 50);
 
   // ── VWAP ──
   const vwap = calcVWAP(bars, 20);
@@ -1026,6 +1166,31 @@ function buildSignal(symbol, bars, spyMove21, marketBias, settings = {}, histori
   } else {
     // No fundamental data available — this is normal for ETFs and some stocks
     // Don't show a warning — fundamentals are optional enrichment only
+  }
+
+  // ── Pocket Pivot Scoring ──
+  if (pocketPivot.detected) {
+    technicalScore += 14;
+    reasons.push(pocketPivot.reason);
+    reasons.push(`Volume ${pocketPivot.volRatioVsDown}x the largest down-day of last 10 sessions — institutional accumulation confirmed.`);
+  }
+
+  // ── Fibonacci Level Scoring ──
+  if (fib) {
+    if (fib.inGoldenPocket) {
+      technicalScore += 10;
+      reasons.push(`Price is in the Fibonacci golden pocket (50%–61.8% retracement) — the most reliable swing entry zone.`);
+    } else if (fib.nearFibLevel && fib.aboveFib618) {
+      technicalScore += 6;
+      reasons.push(`Price near Fibonacci ${fib.nearestName} level ($${fib.nearestLevel}) — potential support zone.`);
+    } else if (fib.nearFibLevel && !fib.aboveFib618) {
+      technicalScore += 3;
+      reasons.push(`Price near Fibonacci ${fib.nearestName} level ($${fib.nearestLevel}).`);
+    }
+    // Warn if price is too extended above all Fibonacci levels
+    if (fib.retracementPct < 10 && setup !== "Breakout") {
+      warnings.push(`Price only ${fib.retracementPct}% below swing high — limited retracement. Better entry may come after a pullback to Fibonacci levels.`);
+    }
   }
 
   // ── Market Follow-Through Day ──
@@ -1415,6 +1580,8 @@ function buildSignal(symbol, bars, spyMove21, marketBias, settings = {}, histori
     failedBreakout: failedBO.failed,
     fundamentals: fund || null,
     volumeRatio: round(volumeRatio, 2),
+    pocketPivot,
+    fib,
     sectorEtf: sectorCheck.etf,
     sectorBullish: sectorCheck.bullish,
     sectorScore: sectorCheck.score,
