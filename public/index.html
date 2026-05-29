@@ -2406,26 +2406,43 @@ document.getElementById('muteBtn').addEventListener('click', toggleMute);
 
 // ── Init ──────────────────────────────────────────────────────
 setInterval(() => marketCountdown(), 1000);
-// Smart refresh — every 60s during opening window, every 3 mins otherwise
+
+// ── Auto-refresh logic ──
+// Use Intl API for reliable timezone (toLocaleString fails in some browsers)
+function getETMins() {
+  try {
+    const fmt = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/New_York',
+      hour: '2-digit', minute: '2-digit', weekday: 'short', hour12: false
+    });
+    const parts = fmt.formatToParts(new Date());
+    const get = t => parts.find(p => p.type === t)?.value;
+    const days = { Sun:0, Mon:1, Tue:2, Wed:3, Thu:4, Fri:5, Sat:6 };
+    const day = days[get('weekday')] ?? new Date().getDay();
+    const h = parseInt(get('hour')) % 24;
+    const m = parseInt(get('minute'));
+    return { mins: h * 60 + m, day };
+  } catch {
+    // Fallback: UTC offset (EDT = UTC-4)
+    const now = new Date();
+    const et = new Date(now.getTime() - 4 * 3600000);
+    return { mins: et.getUTCHours() * 60 + et.getUTCMinutes(), day: et.getUTCDay() };
+  }
+}
+
+// Every 60 seconds — refresh during opening window (9:45-10:30 AM ET)
 setInterval(() => {
-  const now = new Date();
-  const et = new Date(now.toLocaleString('en-US', {timeZone: 'America/New_York'}));
-  const mins = et.getHours() * 60 + et.getMinutes();
-  const day = et.getDay();
-  const inWindow = day !== 0 && day !== 6 && mins >= 9*60+40 && mins < 10*60+35;
-  // During opening window refresh every 60s, otherwise every 3 mins
+  const { mins, day } = getETMins();
+  const inWindow = day !== 0 && day !== 6 && mins >= 9*60+45 && mins < 10*60+30;
   if (inWindow) loadState(false);
 }, 60000);
 
+// Every 2 minutes — refresh outside window (end-of-day prices update)
 setInterval(() => {
-  const now = new Date();
-  const et = new Date(now.toLocaleString('en-US', {timeZone: 'America/New_York'}));
-  const mins = et.getHours() * 60 + et.getMinutes();
-  const day = et.getDay();
-  const inWindow = day !== 0 && day !== 6 && mins >= 9*60+40 && mins < 10*60+35;
-  // Outside opening window, refresh every 3 mins
+  const { mins, day } = getETMins();
+  const inWindow = day !== 0 && day !== 6 && mins >= 9*60+45 && mins < 10*60+30;
   if (!inWindow) loadState(false);
-}, 180000);
+}, 120000);
 marketCountdown();
 loadState(false);
 </script>
