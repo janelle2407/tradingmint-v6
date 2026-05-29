@@ -1649,7 +1649,7 @@ function tradeDetailHTML(s) {
   }
 
   // ── Paper Buy / Manual Entry Button ──
-  // Always show this at the bottom of the trade detail panel
+  // TRADE_READY: full green button
   if (s.safety === 'TRADE_READY') {
     html += `<div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border)">
       <button onclick="enterPaper('${s.symbol}')"
@@ -1661,10 +1661,20 @@ function tradeDetailHTML(s) {
         Entry: ${money(s.entry)} · Stop: ${money(s.stop)} · Target: ${money(s.target1)} · Risk: 1% of account
       </div>
     </div>`;
-  } else if (s.safety === 'WATCHLIST') {
+  } else if (s.safety === 'WATCHLIST' || s.safety === 'REJECT') {
+    // Manual override — let the user decide if they see something the system doesn't
     html += `<div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border)">
-      <div style="width:100%;padding:10px;background:rgba(251,191,36,.08);color:var(--yellow);border:1px solid rgba(251,191,36,.25);border-radius:8px;font-size:12px;text-align:center">
-        ⊙ Watchlist — not ready to buy yet. Check the "Why not TRADE_READY" section above.
+      <div style="background:rgba(251,191,36,.08);border:1px solid rgba(251,191,36,.25);border-radius:8px;padding:10px 12px;margin-bottom:10px;font-size:11px;color:var(--text2)">
+        ⚠️ The system rates this as <strong>${s.safety === 'WATCHLIST' ? 'WATCHLIST' : 'NOT READY'}</strong>.
+        Check the reasons above. If you disagree and want to enter anyway, use the override button.
+      </div>
+      <button onclick="enterPaperOverride('${s.symbol}')"
+        style="width:100%;padding:10px;background:rgba(251,191,36,.08);color:var(--yellow);border:1px solid rgba(251,191,36,.3);border-radius:8px;font-size:13px;font-weight:600;cursor:pointer"
+        onmouseover="this.style.background='rgba(251,191,36,.18)'" onmouseout="this.style.background='rgba(251,191,36,.08)'">
+        ⚡ Manual Override — Paper Buy ${s.symbol} Anyway
+      </button>
+      <div style="font-size:10px;color:var(--muted);text-align:center;margin-top:6px">
+        Entry: ${money(s.entry)} · Stop: ${money(s.stop)} · Target: ${money(s.target1)} · Your call, your risk.
       </div>
     </div>`;
   }
@@ -2326,6 +2336,24 @@ async function loadState(force=false) {
 }
 
 // ── Paper trading actions ─────────────────────────────────────
+async function enterPaperOverride(symbol) {
+  // Manual override — bypass safety check and enter regardless of signal grade
+  if (!confirm(`Enter paper trade for ${symbol}?\n\nThe system flagged this as not fully ready. You are overriding based on your own judgement.\n\nEntry, stop and target levels still apply. Max risk is 1% of account.`)) return;
+  const res = await fetch('/api/paper/enter/override', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ symbol })
+  });
+  const out = await res.json();
+  if (out.ok) {
+    showToast(`✓ Manual override — ${symbol} paper trade entered`);
+    speak(`Manual entry for ${symbol}.`);
+    await loadState(false);
+  } else {
+    showToast('✗ Could not enter: ' + (out.reasons?.join(', ') || out.error || 'Unknown error'), 5000);
+  }
+}
+
 async function enterPaper(symbol) {
   const res = await fetch('/api/paper/enter', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({symbol}) });
   const out = await res.json();
