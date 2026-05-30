@@ -246,9 +246,36 @@ async function buildState(force = false) {
       health: { status: "degraded", reason: err.message }
     };
   }
-  // Auto-backtest disabled — user must click Backtest button manually
-  // Running it automatically on every /api/state call caused Render timeouts
+  // Auto-backtest: run if edges are empty or stale (>6 hours old).
+  // This ensures edges are always populated after a fresh deploy or DB reset
+  // without requiring the user to manually click Backtest.
+  // Runs synchronously here only when edges are missing — normal scans skip it.
   const edgeRun = { reused: true, result: null };
+  const freshEdgesCheck = readDb().historicalEdges || {};
+  const hasEdges = Object.keys(freshEdgesCheck).length > 0;
+  if (!hasEdges) {
+    try {
+      console.log("[AUTO-BACKTEST] No edges found — running backtest now...");
+      const barsForBT = universe.completedBarsBySymbol || universe.barsBySymbol;
+      const btResult = runPortfolioBacktest(barsForBT, {
+        ...db.settings,
+        edgeWeight: 0,
+        requireHistoricalEdge: false,
+        minHistoricalTrades: 0,
+        blockUnknownEarnings: false
+      });
+      db.historicalEdges = btResult.edges || {};
+      db.backtests.unshift(btResult);
+      db.backtests = db.backtests.slice(0, 30);
+      addJournal(db, "AUTO_BACKTEST", "-",
+        `Auto-backtest: ${btResult.summary.trades} trades, ${Object.keys(btResult.edges||{}).length} symbols`,
+        btResult.summary);
+      writeDb(db);
+      console.log(`[AUTO-BACKTEST] Done — ${btResult.summary.trades} trades, ${Object.keys(btResult.edges||{}).length} edge symbols`);
+    } catch (btErr) {
+      console.log("[AUTO-BACKTEST] Failed:", btErr.message);
+    }
+  }
   const barsForScan = universe.completedBarsBySymbol || universe.barsBySymbol;
   const symbols = Object.keys(barsForScan);
 
@@ -262,11 +289,9 @@ async function buildState(force = false) {
     fetchIntradayRvolForSymbols(symbols).catch(() => ({}))
   ]);
 
-  // Re-read edges from disk right before scanning — the startup backtest runs
-  // asynchronously and may have just finished writing fresh edge data after
-  // db was read at the top of buildState(). This one-liner ensures we never
-  // scan with stale (empty) edges when fresh ones are already on disk.
-  const freshEdges = readDb().historicalEdges || db.historicalEdges || {};
+  // Use the most current edges — either just written by auto-backtest above,
+  // or re-read from disk in case the startup backtest finished asynchronously.
+  const freshEdges = db.historicalEdges || readDb().historicalEdges || {};
 
   const scanned = scanMarket(
     barsForScan,
