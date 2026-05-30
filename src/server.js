@@ -204,7 +204,13 @@ function edgeFreshEnough(db) {
 async function ensureBacktestEdges(db, universe, force = false) {
   if (!force && edgeFreshEnough(db)) return { reused: true, result: null };
   const bars = universe.completedBarsBySymbol || universe.barsBySymbol;
-  const result = runPortfolioBacktest(bars, db.settings);
+  const result = runPortfolioBacktest(bars, {
+    ...db.settings,
+    edgeWeight: 0,
+    requireHistoricalEdge: false,
+    minHistoricalTrades: 0,
+    blockUnknownEarnings: false
+  });
   db.historicalEdges = result.edges || {};
   db.backtests.unshift(result);
   db.backtests = db.backtests.slice(0, 30);
@@ -256,10 +262,16 @@ async function buildState(force = false) {
     fetchIntradayRvolForSymbols(symbols).catch(() => ({}))
   ]);
 
+  // Re-read edges from disk right before scanning — the startup backtest runs
+  // asynchronously and may have just finished writing fresh edge data after
+  // db was read at the top of buildState(). This one-liner ensures we never
+  // scan with stale (empty) edges when fresh ones are already on disk.
+  const freshEdges = readDb().historicalEdges || db.historicalEdges || {};
+
   const scanned = scanMarket(
     barsForScan,
     db.settings,
-    db.historicalEdges,
+    freshEdges,
     universe.liveQuotes || {},
     earningsCalendar,
     fundamentalsData,
