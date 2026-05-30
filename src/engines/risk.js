@@ -25,8 +25,10 @@ function positionSize(account,signal,settings){
 
   // Safety net: if sizing produced 0 but equity covers at least 1 share,
   // allow 1 share. This handles high-priced stocks (e.g. $500+ with a $5k
-  // account where maxTradePct=10% cap = $500 < share price).
-  if (shares <= 0 && equity >= entryCost) shares = 1;
+  // account where maxTradePct cap < share price).
+  // Only applies when regime multiplier > 0 — BEARISH multiplier of 0 must
+  // still produce 0 shares (canEnter uses this to block BEARISH entries).
+  if (shares <= 0 && equity >= entryCost && riskMultiplier > 0) shares = 1;
 
   return Math.max(0, shares);
 }
