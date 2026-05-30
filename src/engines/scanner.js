@@ -334,13 +334,14 @@ function marketRegimeFromSignals(signals, vix, barsBySymbol = {}) {
     volatility = vix < 18 ? "LOW" : vix < 25 ? "MEDIUM" : vix < 30 ? "ELEVATED" : "HIGH";
   }
 
-  // Use same thresholds as backtest (backtest.js historicalRegimeAtIndex).
-  // Calculated SPY vol (used when ^VIX is unavailable) runs higher than real VIX,
-  // so both scanner and backtest must use raised thresholds to stay consistent.
-  // When real ^VIX data IS available, these thresholds are still safe because
-  // real VIX rarely exceeds 35 outside severe crises (2020 COVID, 2008 GFC).
-  const vixPause = Number.isFinite(vix) && vix > 35;
-  const vixHalt  = Number.isFinite(vix) && vix > 45;
+  // Thresholds for calculated SPY vol (63-day, ±5% capped).
+  // This metric runs higher than real VIX because it measures realised vol
+  // rather than implied vol, and includes post-crash elevated trading ranges.
+  // vixPause (suppress BULLISH → NEUTRAL): calculated vol > 45
+  // vixHalt  (force BEARISH, only if breadth also weak): calculated vol > 60
+  // These levels correspond roughly to real VIX ~35 (pause) and ~50 (halt).
+  const vixPause = Number.isFinite(vix) && vix > 45;
+  const vixHalt  = Number.isFinite(vix) && vix > 60;
 
   // SPY/QQQ structure — professional regime model using MA layers + slope
   let spyScore = 0, qqqScore = 0;
@@ -368,7 +369,11 @@ function marketRegimeFromSignals(signals, vix, barsBySymbol = {}) {
   let regime = "NEUTRAL";
   if (breadth >= 55 && indexScore >= 6 && !vixPause) regime = "BULLISH";
   else if (breadth >= 45 && indexScore >= 4 && !vixPause) regime = "NEUTRAL";
-  if (breadth < 35 || indexScore <= 2 || vixHalt) regime = "BEARISH";
+  // vixHalt alone only forces BEARISH when breadth is also weak (<45).
+  // Strong breadth (75%+) with elevated calculated vol = volatile but bullish market
+  // (e.g. recovery after a crash) — should be NEUTRAL not BEARISH.
+  // This matches the backtest regime logic for consistency.
+  if (breadth < 35 || indexScore <= 2 || (vixHalt && breadth < 45)) regime = "BEARISH";
 
   return { regime, breadth, volatility, vixPause, vixHalt, spyScore, qqqScore, indexScore };
 }
