@@ -293,20 +293,32 @@ function findSectorLeader(signals) {
 // Calculate VIX equivalent from SPY historical volatility
 // Used when Yahoo Finance blocks ^VIX from server (common on cloud hosts)
 // 20-day annualised standard deviation of daily log returns × 100
-function calcSpyVix(spyBars, period = 20) {
-  if (!Array.isArray(spyBars) || spyBars.length < period + 2) return 18; // neutral default
+function calcSpyVix(spyBars, period = 63) {
+  // Uses 63-day (3-month) lookback with single-day return capped at ±5%.
+  // Reasons:
+  //   1. 63 days smooths single-event spikes (April 2025 tariff crash, etc.)
+  //      without losing sensitivity to sustained elevated volatility
+  //   2. ±5% cap removes data anomalies (splits, corporate actions, bad ticks)
+  //      that can produce artificially high readings (e.g. 60+ annualised vol)
+  //   3. 63 days ≈ the VIX methodology's 30-day forward variance, adjusted for
+  //      the fact we're measuring realised rather than implied volatility
+  if (!Array.isArray(spyBars) || spyBars.length < period + 2) return 18;
   const closes = spyBars.map(b => b.close).filter(Number.isFinite);
   if (closes.length < period + 1) return 18;
   const recent = closes.slice(-period - 1);
   const returns = [];
   for (let i = 1; i < recent.length; i++) {
-    if (recent[i - 1] > 0) returns.push(Math.log(recent[i] / recent[i - 1]));
+    if (recent[i - 1] > 0) {
+      const r = Math.log(recent[i] / recent[i - 1]);
+      // Cap at ±5% — any larger single-day move is either a data error or a
+      // black-swan that shouldn't dominate the vol reading for weeks afterwards
+      returns.push(Math.max(-0.05, Math.min(0.05, r)));
+    }
   }
-  if (returns.length < 5) return 18;
+  if (returns.length < 10) return 18;
   const mean = returns.reduce((s, v) => s + v, 0) / returns.length;
   const variance = returns.reduce((s, v) => s + Math.pow(v - mean, 2), 0) / returns.length;
   const annualisedVol = Math.sqrt(variance) * Math.sqrt(252) * 100;
-  // Clamp to realistic VIX range
   return Math.max(8, Math.min(80, annualisedVol));
 }
 
@@ -1704,10 +1716,13 @@ function scanMarket(barsBySymbol, settings = {}, historicalEdges = {}, liveQuote
     .filter(s => !excluded.has(s))
     .map(s => buildSignal(s, barsBySymbol[s], spyMove21, "NEUTRAL", settings, historicalEdges, barsBySymbol, earningsCalendar, fundamentalsData, intradayRvolBySymbol));
 
-  // Try real VIX data first, fall back to SPY-calculated historical volatility
-  // Yahoo Finance blocks ^VIX from server IPs, so we calculate it from SPY returns
-  const rawVix = (barsBySymbol['^VIX'] || barsBySymbol['VIX'])?.at(-1)?.close;
-  const vix = Number.isFinite(rawVix) ? rawVix : calcSpyVix(spyBars);
+  // Always use SPY-calculated volatility for the regime VIX reading.
+  // Stored ^VIX bar data represents the closing price on the last fetched day —
+  // which may be a historical crisis peak (e.g. 60 during the April 2025 crash)
+  // rather than today's actual VIX. The SPY-based calculation using the last
+  // 63 days with outlier-capping always reflects current realised volatility.
+  const rawVix = null; // intentionally ignored — see above
+  const vix = calcSpyVix(spyBars);
   const preRegime = marketRegimeFromSignals(preliminary, vix, barsBySymbol);
 
   // Second pass with known regime

@@ -58,16 +58,21 @@ function summarizeBySetup(trades) {
 // Calculates real market regime at each bar using only data available up to that point
 // NO bullish assumption — the backtest now avoids longs in historically bearish periods
 
-function calcHistoricalVolatility(bars, endIndex, period = 20) {
+function calcHistoricalVolatility(bars, endIndex, period = 63) {
+  // 63-day lookback with ±5% daily cap — matches calcSpyVix in scanner.js.
+  // Keeps backtest regime logic consistent with live scanner regime logic.
   if (!Array.isArray(bars) || endIndex < period + 1) return 18;
   const slice = bars.slice(Math.max(0, endIndex - period), endIndex + 1);
   const returns = [];
   for (let i = 1; i < slice.length; i++) {
     const prev = slice[i - 1]?.close;
     const curr = slice[i]?.close;
-    if (prev > 0 && curr > 0) returns.push(Math.log(curr / prev));
+    if (prev > 0 && curr > 0) {
+      const r = Math.log(curr / prev);
+      returns.push(Math.max(-0.05, Math.min(0.05, r)));
+    }
   }
-  if (returns.length < 5) return 18;
+  if (returns.length < 10) return 18;
   const mean = returns.reduce((s, v) => s + v, 0) / returns.length;
   const variance = returns.reduce((s, v) => s + Math.pow(v - mean, 2), 0) / returns.length;
   return Math.max(8, Math.min(80, Math.sqrt(variance) * Math.sqrt(252) * 100));
