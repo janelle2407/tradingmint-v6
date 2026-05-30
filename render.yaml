@@ -14,7 +14,7 @@ services:
       - key: SQLITE_PATH
         value: /var/data/tradingmint.sqlite
       - key: SCAN_LIMIT
-        value: "120"
+        value: "90"
       - key: HISTORICAL_RANGE
         value: max
       - key: ADMIN_TOKEN

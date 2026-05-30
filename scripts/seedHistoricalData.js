@@ -34,17 +34,23 @@ const SYMBOLS = [
   // Mega cap tech
   "NVDA", "AAPL", "MSFT", "META", "GOOGL", "AMZN", "TSLA",
   // Semiconductors
-  "AVGO", "AMD", "ARM", "MRVL", "KLAC", "LRCX",
+  "AVGO", "AMD", "ARM", "MRVL", "KLAC", "LRCX", "QCOM", "MU", "ON",
   // Software & cloud
-  "CRWD", "ORCL", "NOW", "PANW", "SNOW", "NET", "DDOG",
+  "CRWD", "ORCL", "NOW", "PANW", "SNOW", "NET", "DDOG", "ZS", "FTNT", "OKTA", "TTD",
   // Growth leaders
-  "PLTR", "APP", "HOOD", "RBLX", "COIN",
+  "PLTR", "APP", "HOOD", "RBLX", "COIN", "MSTR", "SHOP", "MELI",
+  // High-momentum mid-caps
+  "AXON", "DUOL", "HIMS", "CELH", "ASTS", "LUNR", "RXRX",
   // Healthcare
-  "LLY", "NVO", "ISRG",
+  "LLY", "NVO", "ISRG", "VRTX", "REGN", "ABBV",
   // Financials
-  "JPM", "GS", "BAC",
+  "JPM", "GS", "BAC", "SCHW", "KKR",
+  // Industrials
+  "CAT", "DE", "VRT", "PWR", "FAST",
+  // Consumer & retail
+  "COST", "CAVA", "ELF", "WING",
   // Other
-  "COST", "NFLX", "UBER", "ANET", "GE", "TSM", "ASML"
+  "NFLX", "UBER", "ANET", "GE", "TSM", "ASML", "SPOT", "DASH"
 ];
 
 // ── Yahoo Finance fetcher ─────────────────────────────────────────────────────

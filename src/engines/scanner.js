@@ -322,6 +322,27 @@ function calcSpyVix(spyBars, period = 63) {
   return Math.max(8, Math.min(80, annualisedVol));
 }
 
+// ─── Distribution Day Counter ─────────────────────────────────────────────────
+// A distribution day = index drops ≥0.2% on HIGHER volume than prior day.
+// 4-5 distribution days within 25 sessions = institutional selling = market topping.
+// This is the most reliable early warning for regime deterioration.
+// Source: William O'Neil / IBD methodology
+
+function countDistributionDays(bars, period = 25) {
+  if (!Array.isArray(bars) || bars.length < period + 1) return 0;
+  const recent = bars.slice(-period - 1);
+  let count = 0;
+  for (let i = 1; i < recent.length; i++) {
+    const prev = recent[i - 1];
+    const curr = recent[i];
+    if (!prev || !curr) continue;
+    const pctChange = prev.close > 0 ? ((curr.close - prev.close) / prev.close) * 100 : 0;
+    const volUp = curr.volume > prev.volume;
+    if (pctChange <= -0.2 && volUp) count++;
+  }
+  return count;
+}
+
 function marketRegimeFromSignals(signals, vix, barsBySymbol = {}) {
   const excluded = new Set(["SPY","QQQ","DIA","IWM"]);
   const universe = signals.filter(s => !excluded.has(s.symbol));
@@ -366,16 +387,25 @@ function marketRegimeFromSignals(signals, vix, barsBySymbol = {}) {
   }
   const indexScore = spyScore + qqqScore; // max 10
 
-  let regime = "NEUTRAL";
-  if (breadth >= 55 && indexScore >= 6 && !vixPause) regime = "BULLISH";
-  else if (breadth >= 45 && indexScore >= 4 && !vixPause) regime = "NEUTRAL";
-  // vixHalt alone only forces BEARISH when breadth is also weak (<45).
-  // Strong breadth (75%+) with elevated calculated vol = volatile but bullish market
-  // (e.g. recovery after a crash) — should be NEUTRAL not BEARISH.
-  // This matches the backtest regime logic for consistency.
-  if (breadth < 35 || indexScore <= 2 || (vixHalt && breadth < 45)) regime = "BEARISH";
+  // Distribution days: count heavy-volume down days on SPY + QQQ in last 25 sessions.
+  // 4+ distribution days = institutional selling = suppress BULLISH regardless of other signals.
+  const spyDistDays = countDistributionDays(barsBySymbol.SPY || [], 25);
+  const qqqDistDays = countDistributionDays(barsBySymbol.QQQ || [], 25);
+  const totalDistDays = spyDistDays + qqqDistDays;
+  // Suppress BULLISH when distribution is elevated; force BEARISH when heavy
+  const distPause = totalDistDays >= 6;   // 6+ combined = caution
+  const distHalt  = totalDistDays >= 10;  // 10+ combined = institutional dumping
 
-  return { regime, breadth, volatility, vixPause, vixHalt, spyScore, qqqScore, indexScore };
+  let regime = "NEUTRAL";
+  if (breadth >= 55 && indexScore >= 6 && !vixPause && !distPause) regime = "BULLISH";
+  else if (breadth >= 45 && indexScore >= 4 && !vixPause) regime = "NEUTRAL";
+  if (breadth < 35 || indexScore <= 2 || (vixHalt && breadth < 45) || distHalt) regime = "BEARISH";
+
+  return {
+    regime, breadth, volatility,
+    vixPause, vixHalt, spyScore, qqqScore, indexScore,
+    spyDistDays, qqqDistDays, totalDistDays, distPause, distHalt
+  };
 }
 
 // ─── Sector ETF Momentum Check ────────────────────────────────────────────────
@@ -1325,18 +1355,73 @@ function buildSignal(symbol, bars, spyMove21, marketBias, settings = {}, histori
   technicalScore = Math.max(1, Math.min(99, Math.round(technicalScore)));
 
   // ── Weekly trend alignment (higher timeframe) ──
-  // Professional rule: only trade in direction of weekly trend
-  if (bars.length >= 6) {
+  // Uses 10-week MA (50 daily bars) as the primary weekly trend filter.
+  // Professional rule: only trade stocks above their rising 10-week MA.
+  // This is the single most reliable filter for separating leaders from laggards.
+  if (bars.length >= 55) {
+    const weeklyCloses = closes;
+    const ma10w = sma(weeklyCloses, 50);   // 10-week MA = 50 daily bars
+    const ma10wPrev = sma(weeklyCloses.slice(0, -5), 50); // 5 bars ago
+    const weeklyAbove = ma10w && price > ma10w;
+    const weeklyRising = ma10w && ma10wPrev && ma10w > ma10wPrev;
     const weekClose = bars.at(-1).close;
-    const weekOpen  = bars.at(-6)?.close || weekClose; // ~1 week ago
-    const weeklyBull = weekClose > weekOpen;
+    const weekOpen  = bars.at(-6)?.close || weekClose;
     const weeklyMove = ((weekClose - weekOpen) / weekOpen) * 100;
-    if (weeklyBull && weeklyMove > 1) {
-      technicalScore += 7;
+
+    if (weeklyAbove && weeklyRising) {
+      technicalScore += 10;
+      reasons.push(`Price above rising 10-week MA ($${round(ma10w)}) — weekly uptrend confirmed. Higher timeframe aligned.`);
+    } else if (weeklyAbove && !weeklyRising) {
+      technicalScore += 4;
+      reasons.push(`Price above 10-week MA but MA is flattening — weekly trend slowing.`);
+    } else if (!weeklyAbove) {
+      technicalScore -= 10;
+      warnings.push(`Price below 10-week MA ($${round(ma10w)}) — weekly downtrend. Only the strongest setups should be considered.`);
+    }
+
+    // Weekly price momentum as secondary check
+    if (weeklyMove > 2) {
+      technicalScore += 4;
+      reasons.push(`Strong weekly momentum: up ${weeklyMove.toFixed(1)}% this week.`);
+    } else if (weeklyMove < -2) {
+      technicalScore -= 5;
+      warnings.push(`Weak weekly action: down ${Math.abs(weeklyMove).toFixed(1)}% this week — wait for stabilisation.`);
+    }
+  } else if (bars.length >= 6) {
+    // Fallback for shorter bar sets
+    const weekClose = bars.at(-1).close;
+    const weekOpen  = bars.at(-6)?.close || weekClose;
+    const weeklyMove = ((weekClose - weekOpen) / weekOpen) * 100;
+    if (weeklyMove > 1) {
+      technicalScore += 5;
       reasons.push(`Weekly trend is up ${weeklyMove.toFixed(1)}% — higher timeframe aligned.`);
-    } else if (!weeklyBull && weeklyMove < -1) {
-      technicalScore -= 8;
+    } else if (weeklyMove < -1) {
+      technicalScore -= 6;
       warnings.push(`Weekly trend is down ${Math.abs(weeklyMove).toFixed(1)}% — higher timeframe is bearish.`);
+    }
+  }
+
+  // ── Volume Dry-Up on Pullback ──
+  // One of the most reliable swing entry signals: price pulling back on DECLINING volume.
+  // Means sellers are exhausted — institutions are holding, not dumping.
+  // Check last 3 bars: each day's volume should be lower than the day before.
+  if (bars.length >= 5 && (setup === "Pullback" || setup === "EMA Bounce")) {
+    const last3 = bars.slice(-3);
+    const last3vols = last3.map(b => b.volume);
+    const volumeDryUp = last3vols[2] < last3vols[1] && last3vols[1] < last3vols[0];
+    const priorAvgVol = avgVolume(bars.slice(-20, -3)) || 1;
+    const dryUpDepth = priorAvgVol > 0 ? ((priorAvgVol - last3vols[2]) / priorAvgVol) * 100 : 0;
+    const last3Down = last3.every(b => b.close <= b.open); // all 3 bars are red/flat
+
+    if (volumeDryUp && last3Down && dryUpDepth >= 15) {
+      technicalScore += 12;
+      reasons.push(`Volume dry-up on pullback: 3 declining-volume down days (${Math.round(dryUpDepth)}% below average) — sellers exhausted. Classic VCP entry.`);
+    } else if (volumeDryUp && dryUpDepth >= 10) {
+      technicalScore += 6;
+      reasons.push(`Volume declining on pullback (${Math.round(dryUpDepth)}% below average) — constructive consolidation.`);
+    } else if (volumeRatio && volumeRatio > 1.3 && last3.every(b => b.close < b.open)) {
+      technicalScore -= 8;
+      warnings.push(`Pullback on HIGH volume (${round(volumeRatio,1)}x average) — possible distribution. Institutions may be selling.`);
     }
   }
 
@@ -1458,6 +1543,11 @@ function buildSignal(symbol, bars, spyMove21, marketBias, settings = {}, histori
   const trendStrong = !adxVal || adxVal >= 20;
   if (adxVal && adxVal < 20) warnings.push(`Trend is too weak (ADX ${round(adxVal)}) — market is choppy. Waiting for stronger trend.`);
 
+  // Weekly MA check for TRADE_READY gate
+  // Price must be above the 10-week (50-day) MA — professional minimum for entries
+  const ma10w = bars.length >= 50 ? sma(closes, 50) : null;
+  const aboveWeeklyMa = ma10w ? price > ma10w : true; // if not enough bars, allow through
+
   // TRADE_READY: full bullish market OR neutral market with very high confidence (85+)
   const marketOk = marketBias === "BULLISH" || (marketBias === "NEUTRAL" && confidence >= 85);
 
@@ -1476,7 +1566,8 @@ function buildSignal(symbol, bars, spyMove21, marketBias, settings = {}, histori
     multiFactorOk &&
     !earningsBlocked &&
     stageInfo.stage === 2 &&
-    !failedBO.failed
+    !failedBO.failed &&
+    aboveWeeklyMa   // must be above 10-week MA
   ) safety = "TRADE_READY";
   else if (confidence >= 62) safety = "WATCHLIST";
 
@@ -1585,6 +1676,9 @@ function buildSignal(symbol, bars, spyMove21, marketBias, settings = {}, histori
 
   // 16. Failed breakout
   if (failedBO.failed) rejectedReasons.push(failedBO.reason);
+
+  // 17. Below weekly MA
+  if (!aboveWeeklyMa && ma10w) rejectedReasons.push(`Price ($${round(price)}) is below 10-week MA ($${round(ma10w)}) — only trade stocks in weekly uptrends.`);
 
   return {
     symbol,
@@ -1769,7 +1863,14 @@ function scanMarket(barsBySymbol, settings = {}, historicalEdges = {}, liveQuote
     breadth: `${finalRegime.breadth}%`,
     breadthScore: finalRegime.breadth,
     sectorLeader,
-    confidence: Math.round((finalRegime.breadth + (spySignal?.confidence || 50)) / 2)
+    confidence: Math.round((finalRegime.breadth + (spySignal?.confidence || 50)) / 2),
+    // Distribution day tracking — key early warning for market tops
+    distributionDays: finalRegime.totalDistDays || 0,
+    spyDistDays: finalRegime.spyDistDays || 0,
+    qqqDistDays: finalRegime.qqqDistDays || 0,
+    distributionWarning: (finalRegime.totalDistDays || 0) >= 6
+      ? `⚠️ ${finalRegime.totalDistDays} distribution days in last 25 sessions — institutional selling detected`
+      : null
   };
 
   // Overlay live prices on signals for display (without affecting indicator calculations)

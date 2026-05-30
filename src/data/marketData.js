@@ -8,17 +8,23 @@ const DEFAULT_SYMBOLS = [
   // Mega cap tech — highest volume, most liquid
   "NVDA", "AAPL", "MSFT", "META", "GOOGL", "AMZN", "TSLA",
   // Semiconductors — highest momentum group
-  "AVGO", "AMD", "ARM", "MRVL", "KLAC", "LRCX",
-  // Software & cloud
-  "CRWD", "ORCL", "NOW", "PANW", "SNOW", "NET", "DDOG",
-  // Growth leaders
-  "PLTR", "APP", "HOOD", "RBLX", "COIN",
+  "AVGO", "AMD", "ARM", "MRVL", "KLAC", "LRCX", "QCOM", "MU", "ON",
+  // Software & cloud — enterprise + security leaders
+  "CRWD", "ORCL", "NOW", "PANW", "SNOW", "NET", "DDOG", "ZS", "FTNT", "OKTA", "TTD",
+  // Growth leaders — momentum names institutional traders track
+  "PLTR", "APP", "HOOD", "RBLX", "COIN", "MSTR", "SHOP", "MELI",
+  // High-momentum mid-caps — often lead before becoming obvious
+  "AXON", "DUOL", "HIMS", "CELH", "ASTS", "LUNR", "RXRX",
   // Healthcare & biotech
-  "LLY", "NVO", "ISRG",
+  "LLY", "NVO", "ISRG", "VRTX", "REGN", "ABBV",
   // Financials
-  "JPM", "GS", "BAC",
-  // Other high-quality
-  "COST", "NFLX", "UBER", "ANET", "GE", "TSM", "ASML"
+  "JPM", "GS", "BAC", "SCHW", "KKR",
+  // Industrials & infrastructure
+  "CAT", "DE", "VRT", "PWR", "FAST",
+  // Consumer & retail
+  "COST", "CAVA", "ELF", "WING",
+  // Other high-quality multinationals
+  "NFLX", "UBER", "ANET", "GE", "TSM", "ASML", "SPOT", "DASH"
 ];
 
 function parseSymbolList(value) {
