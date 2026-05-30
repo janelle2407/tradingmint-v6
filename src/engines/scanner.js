@@ -322,8 +322,13 @@ function marketRegimeFromSignals(signals, vix, barsBySymbol = {}) {
     volatility = vix < 18 ? "LOW" : vix < 25 ? "MEDIUM" : vix < 30 ? "ELEVATED" : "HIGH";
   }
 
-  const vixPause = Number.isFinite(vix) && vix > 25;
-  const vixHalt  = Number.isFinite(vix) && vix > 30;
+  // Use same thresholds as backtest (backtest.js historicalRegimeAtIndex).
+  // Calculated SPY vol (used when ^VIX is unavailable) runs higher than real VIX,
+  // so both scanner and backtest must use raised thresholds to stay consistent.
+  // When real ^VIX data IS available, these thresholds are still safe because
+  // real VIX rarely exceeds 35 outside severe crises (2020 COVID, 2008 GFC).
+  const vixPause = Number.isFinite(vix) && vix > 35;
+  const vixHalt  = Number.isFinite(vix) && vix > 45;
 
   // SPY/QQQ structure — professional regime model using MA layers + slope
   let spyScore = 0, qqqScore = 0;
