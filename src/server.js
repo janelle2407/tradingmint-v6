@@ -432,6 +432,10 @@ app.post("/api/paper/enter/override", requireAdmin, async (req, res) => {
       minRiskReward: 1,
       requireHistoricalEdge: false,
       blockUnknownEarnings: false,
+      // Raise maxTradePct to 25% for overrides — the default 10% cap can produce
+      // 0 shares for high-priced stocks (e.g. AMD at $516 with $5k account).
+      // ATR-based risk sizing still limits actual dollar risk to riskPerTradePct.
+      maxTradePct: 25,
     };
     const dbOverride = { ...db, settings: overrideSettings };
     const result = enterPaper(dbOverride, signal, "manual-override", barsForManual);

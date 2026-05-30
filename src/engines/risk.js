@@ -21,7 +21,13 @@ function positionSize(account,signal,settings){
   const maxShares = Math.floor(maxTradeValue / entryCost);
 
   // Use smaller of ATR-based and max-trade-based sizing
-  const shares = Math.min(atrShares, maxShares);
+  let shares = Math.min(atrShares, maxShares);
+
+  // Safety net: if sizing produced 0 but equity covers at least 1 share,
+  // allow 1 share. This handles high-priced stocks (e.g. $500+ with a $5k
+  // account where maxTradePct=10% cap = $500 < share price).
+  if (shares <= 0 && equity >= entryCost) shares = 1;
+
   return Math.max(0, shares);
 }
 function canEnter(account, signal, settings, stats={}) {
