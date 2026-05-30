@@ -417,9 +417,28 @@ app.post("/api/paper/enter/override", requireAdmin, async (req, res) => {
     const symbol = String(req.body.symbol || "").toUpperCase();
     let signal = state.signals.find(item => item.symbol === symbol);
     if (!signal) return res.status(404).json({ ok: false, error: "Symbol not found in scanner." });
-    signal = { ...signal, safety: "TRADE_READY", action: "LONG" };
+
+    // Override: force TRADE_READY and bypass regime/edge/earnings blocks.
+    // Also override regime risk multiplier so BEARISH doesn't zero out position size.
+    signal = { ...signal, safety: "TRADE_READY", action: "LONG", marketRegime: "BULLISH" };
+
     const db = readDb();
-    const result = enterPaper(db, signal, "manual-override", barsForManual);
+    // Override settings for this entry only — bypass regime sizing, confidence,
+    // and historical edge requirements so the manual override always works.
+    const overrideSettings = {
+      ...db.settings,
+      regimeRiskMultipliers: { BULLISH: 1, NEUTRAL: 1, BEARISH: 1 },
+      minConfidence: 1,
+      minRiskReward: 1,
+      requireHistoricalEdge: false,
+      blockUnknownEarnings: false,
+    };
+    const dbOverride = { ...db, settings: overrideSettings };
+    const result = enterPaper(dbOverride, signal, "manual-override", barsForManual);
+    // Copy mutated paper state back to real db before writing
+    db.paper = dbOverride.paper;
+    db.journal = dbOverride.journal;
+    db.alerts = dbOverride.alerts;
     writeDb(db);
     res.json(result);
   } catch (error) {
