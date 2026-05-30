@@ -42,14 +42,16 @@ const SECTOR_ETF = {
   "Cloud ETF": "SKYY",
   "Cybersecurity": "CIBR",
   "Cybersecurity ETF": "CIBR",
-  "Networking": "XLK",
+  "Networking": "IGV",
   "Technology ETF": "XLK",
   "Banks": "KBE",
   "Regional Bank ETF": "KRE",
   "Bank ETF": "KBE",
   "Financial ETF": "XLF",
   "Financials": "XLF",
-  "Fintech": "XLF",
+  // Fintech tracks with growth tech (QQQ), not traditional banks (XLF)
+  // SQ, PYPL, SOFI, HOOD move with Nasdaq growth, not financials
+  "Fintech": "QQQ",
   "Healthcare": "XLV",
   "Biotech": "XBI",
   "Biotech ETF": "XBI",
@@ -63,13 +65,14 @@ const SECTOR_ETF = {
   "Retail": "XRT",
   "Retail ETF": "XRT",
   "Consumer ETF": "XLY",
-  "Ecommerce": "XLY",
+  "Ecommerce": "XRT",   // SHOP, MELI track closer to retail than broad consumer
   "Transport": "XLY",
   "Travel": "XLY",
   "Delivery": "XLY",
-  "Streaming": "XLY",
-  "Gaming": "XLY",
-  "Crypto Proxy": "XLK",
+  "Streaming": "QQQ",   // NFLX, ROKU track with growth tech
+  "Gaming": "QQQ",      // RBLX tracks with growth tech, not broad consumer
+  // Crypto proxies track with QQQ/Nasdaq growth, not XLK hardware/software
+  "Crypto Proxy": "QQQ",
   "Staples ETF": "XLP",
   "Utilities ETF": "XLU",
   "Materials ETF": "XLB",

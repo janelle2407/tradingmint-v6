@@ -16,7 +16,7 @@ services:
       - key: SCAN_LIMIT
         value: "120"
       - key: HISTORICAL_RANGE
-        value: 3y
+        value: max
       - key: ADMIN_TOKEN
         generateValue: true
     disk:

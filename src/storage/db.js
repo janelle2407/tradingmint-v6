@@ -27,7 +27,7 @@ const defaultDb = {
     maxDrawdownPct: 10,
     requireHistoricalEdge: true,
     historicalRange: process.env.HISTORICAL_RANGE || "max",
-    minHistoricalBars: 750,
+    minHistoricalBars: 840,  // walk-forward needs 504+252+84 = 840 minimum
     minHistoricalYearsPreferred: 5,
     edgeWeight: 0.45,
     technicalWeight: 0.55,
