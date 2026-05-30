@@ -93,7 +93,53 @@ async function getUniverse(force = false) {
 
   const db = readDb();
   const symbols = configuredSymbols();
-  const universe = await fetchUniverse(symbols, SCAN_LIMIT, db.settings.historicalRange || "max");
+
+  // ── Use pre-seeded bars if available, supplement with fresh Yahoo fetch ──
+  // The seed script (scripts/seedHistoricalData.js) pre-fetches 5y of bars and
+  // stores them in db.historicalBars. On Render, Yahoo is often rate-limited on
+  // startup, so we prefer the seeded bars and only re-fetch symbols that are
+  // missing or whose data is older than 24 hours.
+  const seededBars = db.historicalBars || {};
+  const nowMs = Date.now();
+  const BAR_TTL = 24 * 60 * 60 * 1000; // refresh bars older than 24h
+
+  const symbolsNeedingFetch = symbols.filter(s => {
+    const entry = seededBars[s];
+    if (!entry || !Array.isArray(entry.bars) || entry.bars.length < 200) return true;
+    const age = nowMs - Date.parse(entry.updatedAt || 0);
+    return age > BAR_TTL;
+  });
+
+  const symbolsFromSeed = symbols.filter(s => !symbolsNeedingFetch.includes(s));
+
+  let universe;
+  if (symbolsNeedingFetch.length > 0) {
+    console.log(`[UNIVERSE] Fetching ${symbolsNeedingFetch.length} symbols from Yahoo (${symbolsFromSeed.length} from seed cache)`);
+    try {
+      const fresh = await fetchUniverse(symbolsNeedingFetch, SCAN_LIMIT, db.settings.historicalRange || "5y");
+      const merged = {};
+      for (const s of symbolsFromSeed) merged[s] = seededBars[s].bars;
+      for (const [s, b] of Object.entries(fresh.barsBySymbol)) merged[s] = b;
+      universe = { ...fresh, barsBySymbol: merged, errors: fresh.errors || [],
+        seededCount: symbolsFromSeed.length, freshCount: Object.keys(fresh.barsBySymbol).length };
+    } catch (fetchErr) {
+      console.log(`[UNIVERSE] Yahoo fetch failed (${fetchErr.message}), using seed data only`);
+      const seedOnly = {};
+      for (const s of symbols) {
+        if (seededBars[s]?.bars?.length >= 200) seedOnly[s] = seededBars[s].bars;
+      }
+      universe = { barsBySymbol: seedOnly, errors: [fetchErr.message],
+        seededCount: Object.keys(seedOnly).length, freshCount: 0, usedSeedFallback: true };
+    }
+  } else {
+    console.log(`[UNIVERSE] All ${symbols.length} symbols loaded from seed cache (no Yahoo fetch needed)`);
+    const seedOnly = {};
+    for (const s of symbols) {
+      if (seededBars[s]?.bars?.length >= 200) seedOnly[s] = seededBars[s].bars;
+    }
+    universe = { barsBySymbol: seedOnly, errors: [], seededCount: Object.keys(seedOnly).length, freshCount: 0 };
+  }
+
   universe.completedBarsBySymbol = universe.barsBySymbol;
 
   if (isMarketHours()) {
@@ -118,21 +164,28 @@ async function getUniverse(force = false) {
   lastUniverse = universe;
   lastUniverseTime = Date.now();
 
-  for (const [symbol, bars] of Object.entries(universe.barsBySymbol)) {
-    db.historicalBars[symbol] = {
-      range: db.settings.historicalRange || "3y",
-      interval: "1d",
-      updatedAt: new Date().toISOString(),
-      bars
-    };
+  // Persist freshly fetched bars back to DB
+  if (symbolsNeedingFetch.length > 0) {
+    for (const [symbol, bars] of Object.entries(universe.barsBySymbol)) {
+      if (symbolsNeedingFetch.includes(symbol)) {
+        db.historicalBars[symbol] = {
+          range: db.settings.historicalRange || "5y",
+          interval: "1d",
+          updatedAt: new Date().toISOString(),
+          bars
+        };
+      }
+    }
   }
   db.historicalSnapshots.unshift({
     time: new Date().toISOString(),
-    range: db.settings.historicalRange || "3y",
+    range: db.settings.historicalRange || "5y",
     interval: "1d",
     symbols: Object.keys(universe.barsBySymbol),
     requestedSymbols: symbols,
-    errorCount: universe.errors.length
+    errorCount: (universe.errors || []).length,
+    seededCount: universe.seededCount || 0,
+    freshCount: universe.freshCount || 0
   });
   db.historicalSnapshots = db.historicalSnapshots.slice(0, 500);
   writeDb(db);
@@ -393,7 +446,14 @@ app.post("/api/backtest/run", requireAdmin, async (req, res) => {
     const barsForBacktest = {};
     for (const s of prioritized) barsForBacktest[s] = allBars[s];
 
-    const result = runPortfolioBacktest(barsForBacktest, { ...db.settings, ...(req.body || {}) });
+    // Always override edge/earnings settings for backtesting — these don't apply historically
+    const backtestOverrides = {
+      edgeWeight: 0,
+      requireHistoricalEdge: false,
+      minHistoricalTrades: 0,
+      blockUnknownEarnings: false,
+    };
+    const result = runPortfolioBacktest(barsForBacktest, { ...db.settings, ...backtestOverrides, ...(req.body || {}) });
     db.historicalEdges = result.edges || db.historicalEdges;
     db.backtests.unshift(result);
     db.backtests = db.backtests.slice(0, 30);
@@ -502,8 +562,55 @@ app.post("/api/reset", requireAdmin, (req, res) => {
 
 app.get("*", (req, res) => res.sendFile(path.join(__dirname, "../public/index.html")));
 
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`TradingMint PRO ${VERSION} running on port ${PORT}`);
+
+  // ── Startup: fetch bars + run backtest so scanner is ready immediately ──────
+  // Retries up to 4 times with backoff — Render cold starts sometimes take a
+  // moment before outbound connections are fully available.
+  (async () => {
+    const RETRY_DELAYS = [4000, 15000, 30000, 60000];
+    for (let attempt = 0; attempt <= RETRY_DELAYS.length; attempt++) {
+      if (attempt > 0) {
+        const wait = RETRY_DELAYS[attempt - 1];
+        console.log(`[STARTUP] Retry ${attempt}/${RETRY_DELAYS.length} in ${wait / 1000}s...`);
+        await new Promise(r => setTimeout(r, wait));
+      }
+      try {
+        console.log(`[STARTUP] Fetching historical bars (attempt ${attempt + 1})...`);
+        const universe = await getUniverse(true);
+        const symbolCount = Object.keys(universe.barsBySymbol || {}).length;
+        console.log(`[STARTUP] Got bars for ${symbolCount} symbols`);
+        if (symbolCount < 5) throw new Error(`Only ${symbolCount} symbols — too few to backtest`);
+
+        // Auto-run backtest so historicalEdges are populated before first user visit
+        const db = readDb();
+        const allBars = universe.completedBarsBySymbol || universe.barsBySymbol;
+        console.log(`[STARTUP] Running startup backtest on ${Object.keys(allBars).length} symbols...`);
+        const result = runPortfolioBacktest(allBars, {
+          ...db.settings,
+          edgeWeight: 0,
+          requireHistoricalEdge: false,
+          minHistoricalTrades: 0,
+          blockUnknownEarnings: false
+        });
+        db.historicalEdges = result.edges || db.historicalEdges;
+        db.backtests.unshift(result);
+        db.backtests = db.backtests.slice(0, 30);
+        addJournal(db, "STARTUP_BACKTEST", "-",
+          `Startup backtest: ${result.summary.trades} trades, winRate ${result.summary.winRate}%`,
+          result.summary);
+        writeDb(db);
+        console.log(`[STARTUP] Backtest done — ${result.summary.trades} trades, ${Object.keys(result.edges || {}).length} symbols with edge data`);
+        break; // success
+      } catch (err) {
+        console.log(`[STARTUP] Attempt ${attempt + 1} failed: ${err.message}`);
+        if (attempt === RETRY_DELAYS.length) {
+          console.log("[STARTUP] All retries exhausted — scanner will use existing edge data if any");
+        }
+      }
+    }
+  })();
 
   setInterval(async () => {
     try {

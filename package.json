@@ -7,6 +7,7 @@
   "scripts": {
     "start": "node src/server.js",
     "test": "node tests/runTests.js",
+    "seed": "node scripts/seedHistoricalData.js",
     "check": "node --check src/server.js && node --check src/engines/scanner.js && node --check src/engines/backtest.js && node --check src/engines/paper.js && node --check src/data/marketData.js && node tests/runTests.js"
   },
   "engines": {
